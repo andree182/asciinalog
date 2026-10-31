@@ -1,0 +1,46 @@
+{
+    "author": "Andree",
+    "dependencies": {},
+    "keywords": [
+        "pebble-app"
+    ],
+    "name": "asciinalog",
+    "pebble": {
+        "capabilities": [
+            "configurable"
+        ],
+        "displayName": "ASCIInalog",
+        "enableMultiJS": true,
+        "messageKeys": [
+            "MIN_CHAR_SIZE",
+            "MAX_CHAR_SIZE",
+            "BIG_CHAR_BIAS",
+            "PUNCT_RATIO",
+            "IMPERFECTION",
+            "SHOW_DATE",
+            "INVERT_COLORS",
+            "FILL_MODE",
+            "LAYOUT_STYLE",
+            "GREY_COMPLICATIONS"
+        ],
+        "projectType": "native",
+        "resources": {
+            "media": []
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "aplite",
+            "basalt",
+            "chalk",
+            "diorite",
+            "emery",
+            "gabbro",
+            "flint"
+        ],
+        "uuid": "4e4e14bc-c0ce-4e17-9f0d-928a4dd6f6fe",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "1.0.0"
+}
