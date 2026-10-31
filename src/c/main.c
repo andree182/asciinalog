@@ -627,100 +627,194 @@ static void grid_rect_occupy(uint32_t occ[], int gx, int gy, int gw, int gh) {
     }
 }
 
+static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
+                                uint32_t occ[], int cols, int rows,
+                                int16_t origin_x, int16_t origin_y,
+                                int16_t cell_w, int16_t cell_h,
+                                const char *word, int word_len,
+                                int gx0, int gy0, int dw, int dh,
+                                GColor fg_color) {
+    if (gx0 < 0 || gy0 < 0 || (gx0 + word_len * dw) > cols || (gy0 + dh) > rows) {
+        return false;
+    }
+    int16_t bw = dw * cell_w;
+    int16_t bh = dh * cell_h;
+
+    for (int i = 0; i < word_len; i++) {
+        int gx = gx0 + i * dw;
+        if (!grid_rect_free(occ, cols, rows, gx, gy0, dw, dh)) {
+            return false;
+        }
+        int16_t bx = origin_x + gx * cell_w;
+        int16_t by = origin_y + gy0 * cell_h;
+        uint8_t q[4];
+        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) {
+            return false;
+        }
+        int g_idx = find_glyph_index(word[i]);
+        if (!glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+            return false;
+        }
+    }
+
+    for (int i = 0; i < word_len; i++) {
+        int gx = gx0 + i * dw;
+        int16_t bx = origin_x + gx * cell_w;
+        int16_t by = origin_y + gy0 * cell_h;
+        int g_idx = find_glyph_index(word[i]);
+        draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
+        grid_rect_occupy(occ, gx, gy0, dw, dh);
+    }
+    return true;
+}
+
+static bool try_place_grid_stacked_date(GContext *ctx, const DialGeometry *geom,
+                                        uint32_t occ[], int cols, int rows,
+                                        int16_t origin_x, int16_t origin_y,
+                                        int16_t cell_w, int16_t cell_h,
+                                        const char *day_str, const char *num_str,
+                                        int gx0, int gy0, int dw, int dh,
+                                        GColor fg_color) {
+    if (gx0 < 0 || gy0 < 0 || (gx0 + 3 * dw) > cols || (gy0 + 2 * dh) > rows) {
+        return false;
+    }
+    int16_t bw = dw * cell_w;
+    int16_t bh = dh * cell_h;
+    int num_gx0 = gx0 + (dw / 2);
+
+    for (int i = 0; i < 3; i++) {
+        int gx = gx0 + i * dw;
+        if (!grid_rect_free(occ, cols, rows, gx, gy0, dw, dh)) return false;
+        int16_t bx = origin_x + gx * cell_w;
+        int16_t by = origin_y + gy0 * cell_h;
+        uint8_t q[4];
+        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) return false;
+        if (!glyph_fits_cleanly(geom, find_glyph_index(day_str[i]), bx, by, bw, bh)) return false;
+    }
+    for (int i = 0; i < 2; i++) {
+        int gx = num_gx0 + i * dw;
+        int gy = gy0 + dh;
+        if (!grid_rect_free(occ, cols, rows, gx, gy, dw, dh)) return false;
+        int16_t bx = origin_x + gx * cell_w;
+        int16_t by = origin_y + gy * cell_h;
+        uint8_t q[4];
+        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) return false;
+        if (!glyph_fits_cleanly(geom, find_glyph_index(num_str[i]), bx, by, bw, bh)) return false;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        int gx = gx0 + i * dw;
+        draw_glyph(ctx, find_glyph_index(day_str[i]),
+                   origin_x + gx * cell_w, origin_y + gy0 * cell_h,
+                   bw, bh, true, fg_color);
+        grid_rect_occupy(occ, gx, gy0, dw, dh);
+    }
+    for (int i = 0; i < 2; i++) {
+        int gx = num_gx0 + i * dw;
+        int gy = gy0 + dh;
+        draw_glyph(ctx, find_glyph_index(num_str[i]),
+                   origin_x + gx * cell_w, origin_y + gy * cell_h,
+                   bw, bh, true, fg_color);
+        grid_rect_occupy(occ, gx, gy, dw, dh);
+    }
+    return true;
+}
+
 static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
     GRect bounds = layer_get_bounds(layer);
     int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
-    int16_t cell_s = min_dim / 25; // 8px on Emery, 5-6px on 144x168, 10px on Gabbro
-    if (cell_s < 6) cell_s = 6;
+    int16_t cell_w = min_dim / 25; // 8px on Emery, 6px on 144x168, 10px on Gabbro
+    if (cell_w < 6) cell_w = 6;
+    int16_t cell_h = cell_w + 1;   // Slight portrait aspect ratio (8x9 on Emery, 6x7 on 144x168)
 
-    int cols = geom->is_full_rect ? ((bounds.size.w - 4) / cell_s) : 24;
-    int rows = geom->is_full_rect ? ((bounds.size.h - 4) / cell_s) : 24;
+    int cols = geom->is_full_rect ? ((bounds.size.w - 4) / cell_w) : ((min_dim - 6) / cell_w);
+    int rows = geom->is_full_rect ? ((bounds.size.h - 4) / cell_h) : ((min_dim - 6) / cell_h);
     if (cols > 30) cols = 30;
     if (rows > MAX_GRID_ROWS) rows = MAX_GRID_ROWS;
 
-    int16_t origin_x = (bounds.size.w - cols * cell_s) / 2;
-    int16_t origin_y = (bounds.size.h - rows * cell_s) / 2;
+    int16_t origin_x = (bounds.size.w - cols * cell_w) / 2;
+    int16_t origin_y = (bounds.size.h - rows * cell_h) / 2;
 
     uint32_t occ[MAX_GRID_ROWS];
     for (int r = 0; r < rows; r++) occ[r] = 0U;
 
     int minute_salt = s_current_time.tm_hour * 60 + s_current_time.tm_min;
 
-    // 1. Optional Complication Banner (e.g. "*SAT-31*" or "SAT-31")
-    // Any banner letter hit by a clock hand is NOT drawn at 3x4 size; instead its
-    // cells remain free so Steps 2-3 subdivide cleanly right up to the hand border!
+    // 1. Atomic Complication Word (e.g. "SAT-31")
+    // Placed ONLY as an unobstructed whole so digits are NEVER dropped mid-word.
     if (s_settings.show_date) {
         char date_word[10];
+        char num_word[4];
         int wday = (s_current_time.tm_wday >= 0 && s_current_time.tm_wday < 7)
                    ? s_current_time.tm_wday : 0;
-        int dw = (s_settings.max_char_size >= 5 && cols >= 22) ? 3 : 2;
-        int dh = (dw == 3) ? 4 : 3;
-        int word_len;
-        if (dw == 3) {
-            snprintf(date_word, sizeof(date_word), "%s-%02d", s_day_names[wday], s_current_time.tm_mday);
-            word_len = 6;
-        } else {
-            snprintf(date_word, sizeof(date_word), "*%s-%02d*", s_day_names[wday], s_current_time.tm_mday);
-            word_len = 8;
-        }
-        int start_gx = (cols - word_len * dw) / 2;
-        if (start_gx < 1) start_gx = 1;
+        snprintf(date_word, sizeof(date_word), "%s-%02d", s_day_names[wday], s_current_time.tm_mday);
+        snprintf(num_word, sizeof(num_word), "%02d", s_current_time.tm_mday);
+        bool placed = false;
 
-        int cand_gy[2] = { (rows * 62) / 100, (rows * 24) / 100 };
-        int best_gy = cand_gy[0];
-        int best_fit = -1;
-        for (int c = 0; c < 2; c++) {
-            int gy_try = cand_gy[c];
-            if (gy_try + dh >= rows) continue;
-            int fits = 0;
-            for (int i = 0; i < word_len; i++) {
-                int g_idx = find_glyph_index(date_word[i]);
-                int16_t bx = origin_x + (start_gx + i * dw) * cell_s;
-                int16_t by = origin_y + gy_try * cell_s;
-                if (glyph_fits_cleanly(geom, g_idx, bx, by, dw * cell_s, dh * cell_s)) {
-                    fits++;
+        // Pass A: Large 3x3 hero banner ("SAT-31" = 18 cols wide)
+        if (s_settings.max_char_size >= 5 && cols >= 20) {
+            static const int pct_y[6] = { 62, 24, 55, 31, 68, 17 };
+            static const int off_x[5] = { 0, -1, 1, -2, 2 };
+            int cx_gx = (cols - 18) / 2;
+            for (int py = 0; py < 6 && !placed; py++) {
+                int gy = (rows * pct_y[py]) / 100;
+                for (int ox = 0; ox < 5 && !placed; ox++) {
+                    placed = try_place_grid_word(ctx, geom, occ, cols, rows,
+                                                 origin_x, origin_y, cell_w, cell_h,
+                                                 date_word, 6, cx_gx + off_x[ox], gy, 3, 3, fg_color);
                 }
             }
-            if (fits > best_fit) {
-                best_fit = fits;
-                best_gy = gy_try;
+        }
+
+        // Pass B: Medium 2x3 banner ("SAT-31" = 12 cols wide, shifts left/right to dodge vertical hands)
+        if (!placed) {
+            static const int pct_y[8] = { 62, 24, 55, 31, 70, 16, 46, 38 };
+            static const int off_x[7] = { 0, -2, 2, -4, 4, -6, 6 };
+            int cx_gx = (cols - 12) / 2;
+            for (int py = 0; py < 8 && !placed; py++) {
+                int gy = (rows * pct_y[py]) / 100;
+                for (int ox = 0; ox < 7 && !placed; ox++) {
+                    placed = try_place_grid_word(ctx, geom, occ, cols, rows,
+                                                 origin_x, origin_y, cell_w, cell_h,
+                                                 date_word, 6, cx_gx + off_x[ox], gy, 2, 3, fg_color);
+                }
             }
         }
 
-        for (int i = 0; i < word_len && date_word[i] != '\0'; i++) {
-            int gx = start_gx + i * dw;
-            int gy = best_gy;
-            int g_idx = find_glyph_index(date_word[i]);
-            int16_t bx = origin_x + gx * cell_s;
-            int16_t by = origin_y + gy * cell_s;
-            int16_t bw = dw * cell_s;
-            int16_t bh = dh * cell_s;
-
-            uint8_t q[4];
-            if (grid_rect_free(occ, cols, rows, gx, gy, dw, dh) &&
-                sample_rect_quadrants(geom, bx, by, bw, bh, q) >= 45 &&
-                glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
-                draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
-                grid_rect_occupy(occ, gx, gy, dw, dh);
+        // Pass C: Guaranteed 2-line quadrant badge ("SAT" over "31", 6x4 cells)
+        if (!placed) {
+            int q_gx[6] = { cols - 8, 2, cols - 8, 2, 2, cols - 8 };
+            int q_gy[6] = { (rows * 58) / 100, (rows * 58) / 100,
+                            (rows * 24) / 100, (rows * 24) / 100,
+                            (rows * 41) / 100, (rows * 41) / 100 };
+            for (int q = 0; q < 6 && !placed; q++) {
+                placed = try_place_grid_stacked_date(ctx, geom, occ, cols, rows,
+                                                     origin_x, origin_y, cell_w, cell_h,
+                                                     s_day_names[wday], num_word,
+                                                     q_gx[q], q_gy[q], 2, 2, fg_color);
             }
         }
     }
 
     // 2. Multi-Scale Hero & Medium Grid Blocks (5x5, 4x4, 3x3, 2x2 cells)
     // Map settings max_char_size (3..6) -> block size in cells (2..5)
-    int max_bs = (int)s_settings.max_char_size - 1; // lvl 5 -> 4x4 (32x32px), lvl 6 -> 5x5 (40x40px)
+    int max_bs = (int)s_settings.max_char_size - 1; // lvl 5 -> 4x4 (32x36px), lvl 6 -> 5x5 (40x45px)
     if (max_bs < 2) max_bs = 2;
     if (max_bs > 5) max_bs = 5;
+    int min_interior_bs = (s_settings.min_char_size >= 3) ? ((int)s_settings.min_char_size - 1) : 1;
 
     for (int bs = max_bs; bs >= 2; bs--) {
-        // Probability tuned by big_char_bias so big hero glyphs mix with stacked smaller rows
         int accept_pct;
-        if (bs >= 4) {
+        if (bs <= min_interior_bs) {
+            accept_pct = 100;
+        } else if (bs >= 4) {
             accept_pct = (s_settings.big_char_bias * 55) / 100; // ~40% at bias 72
         } else if (bs == 3) {
             accept_pct = 15 + (s_settings.big_char_bias * 55) / 100; // ~55% at bias 72
         } else {
-            accept_pct = 30 + (s_settings.big_char_bias * 50) / 100; // ~66% at bias 72
+            accept_pct = (s_settings.min_char_size == 1)
+                         ? (20 + (s_settings.big_char_bias * 45) / 100)
+                         : (35 + (s_settings.big_char_bias * 55) / 100); // ~75% at default min=2, bias=72
         }
 
         for (int gy = 0; gy <= rows - bs; gy++) {
@@ -733,10 +827,10 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                     continue;
                 }
 
-                int16_t bx = origin_x + gx * cell_s;
-                int16_t by = origin_y + gy * cell_s;
-                int16_t bw = bs * cell_s;
-                int16_t bh = bs * cell_s;
+                int16_t bx = origin_x + gx * cell_w;
+                int16_t by = origin_y + gy * cell_h;
+                int16_t bw = bs * cell_w;
+                int16_t bh = bs * cell_h;
 
                 uint8_t q[4];
                 int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
@@ -766,17 +860,17 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                 continue;
             }
 
-            int16_t bx = origin_x + gx * cell_s;
-            int16_t by = origin_y + gy * cell_s;
+            int16_t bx = origin_x + gx * cell_w;
+            int16_t by = origin_y + gy * cell_h;
             uint8_t q[4];
-            int total_cov = sample_rect_quadrants(geom, bx, by, cell_s, cell_s, q);
+            int total_cov = sample_rect_quadrants(geom, bx, by, cell_w, cell_h, q);
             if (total_cov == 0) {
                 continue;
             }
 
             uint32_t h = fast_hash(gx, gy, minute_salt + 97);
-            int16_t mid_x = bx + cell_s / 2;
-            int16_t mid_y = by + cell_s / 2;
+            int16_t mid_x = bx + cell_w / 2;
+            int16_t mid_y = by + cell_h / 2;
             bool near_hand = is_near_hands(geom, mid_x, mid_y);
 
             // On outer circle rim (away from hands!), skip minor slivers per imperfection
@@ -796,17 +890,22 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                 int cand = (allow_punct && s_num_dense_punct > 0)
                            ? s_dense_punct[(h >> 12) % s_num_dense_punct]
                            : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
-                if (glyph_fits_cleanly(geom, cand, bx, by, cell_s, cell_s)) {
+                if (glyph_fits_cleanly(geom, cand, bx, by, cell_w, cell_h)) {
                     g_idx = cand;
                 }
             } else {
                 g_idx = match_contour_glyph(geom, q, total_cov,
-                                            bx, by, cell_s, cell_s,
+                                            bx, by, cell_w, cell_h,
                                             allow_punct, allow_micro, h);
+                if (g_idx < 0 && near_hand && !allow_punct && s_settings.punct_ratio > 0) {
+                    g_idx = match_contour_glyph(geom, q, total_cov,
+                                                bx, by, cell_w, cell_h,
+                                                true, total_cov <= 15, h);
+                }
             }
 
             if (g_idx >= 0) {
-                draw_glyph(ctx, g_idx, bx, by, cell_s, cell_s, false, fg_color);
+                draw_glyph(ctx, g_idx, bx, by, cell_w, cell_h, false, fg_color);
                 grid_rect_occupy(occ, gx, gy, 1, 1);
             }
         }
@@ -821,6 +920,60 @@ static const uint8_t LVL_W[7] = { 0,  2,  3,  4,  6,  8, 10 };
 static const uint8_t LVL_H[7] = { 0,  3,  4,  5,  7, 10, 12 };
 static const uint16_t LVL_STRIDE[7] = { 1, 733, 1229, 977, 1619, 1397, 1511 };
 
+static bool try_place_organic_word(GContext *ctx, const DialGeometry *geom,
+                                   uint64_t occ[], int16_t origin_x, int16_t origin_y,
+                                   int16_t span_x, int16_t span_y,
+                                   const char *word, int word_len,
+                                   int gx0, int gy0, int dw, int dh,
+                                   int minute_salt, GColor fg_color) {
+    if (gx0 < 0 || gy0 < 0 || (gx0 + word_len * dw) > SUB_N || (gy0 + dh) > SUB_N) {
+        return false;
+    }
+    int gy_arr[8];
+    for (int i = 0; i < word_len; i++) {
+        int gx = gx0 + i * dw;
+        int jitter = (s_settings.imperfection >= 25)
+                     ? ((int)(fast_hash(i, minute_salt, 7) % 3) - 1) : 0;
+        int gy = gy0 + jitter;
+        if (gy < 0 || (gy + dh) > SUB_N) gy = gy0;
+
+        int g_idx = find_glyph_index(word[i]);
+        int16_t bx = origin_x + (gx * span_x) / SUB_N;
+        int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+        int16_t by = origin_y + (gy * span_y) / SUB_N;
+        int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+        uint8_t q[4];
+
+        if (!subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) ||
+            sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45 ||
+            !glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+            if (gy == gy0) return false;
+            gy = gy0;
+            by = origin_y + (gy * span_y) / SUB_N;
+            bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+            if (!subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) ||
+                sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45 ||
+                !glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+                return false;
+            }
+        }
+        gy_arr[i] = gy;
+    }
+
+    for (int i = 0; i < word_len; i++) {
+        int gx = gx0 + i * dw;
+        int gy = gy_arr[i];
+        int g_idx = find_glyph_index(word[i]);
+        int16_t bx = origin_x + (gx * span_x) / SUB_N;
+        int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+        int16_t by = origin_y + (gy * span_y) / SUB_N;
+        int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+        draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
+        subgrid_occupy(occ, gx, gy, dw, dh);
+    }
+    return true;
+}
+
 static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
     GRect bounds = layer_get_bounds(layer);
     int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
@@ -834,55 +987,86 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
     uint64_t occ[SUB_N];
     for (int y = 0; y < SUB_N; y++) occ[y] = 0ULL;
 
-    // 1. Optional Day / Date Word
+    // 1. Atomic Day / Date Word ("SAT-31" or stacked "SAT" / "31")
     if (s_settings.show_date) {
         char date_word[10];
+        char num_word[4];
         int wday = (s_current_time.tm_wday >= 0 && s_current_time.tm_wday < 7)
                    ? s_current_time.tm_wday : 0;
         snprintf(date_word, sizeof(date_word), "%s-%02d", s_day_names[wday], s_current_time.tm_mday);
+        snprintf(num_word, sizeof(num_word), "%02d", s_current_time.tm_mday);
+        bool placed = false;
 
-        int dw = (s_settings.max_char_size >= 4) ? 6 : 5;
-        int dh = (s_settings.max_char_size >= 4) ? 8 : 6;
-        int word_len = 6;
-        int start_gx = (SUB_N - word_len * dw) / 2;
-
-        static const int cand_rows[4] = { 30, 11, 34, 7 };
-        int best_gy = 30;
-        int best_fit = -1;
-        for (int c = 0; c < 4; c++) {
-            int gy_try = cand_rows[c];
-            int fits = 0;
-            for (int i = 0; i < word_len; i++) {
-                int g_idx = find_glyph_index(date_word[i]);
-                int gx = start_gx + i * dw;
-                int16_t bx = origin_x + (gx * span_x) / SUB_N;
-                int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
-                int16_t by = origin_y + (gy_try * span_y) / SUB_N;
-                int16_t bh = origin_y + ((gy_try + dh) * span_y) / SUB_N - by;
-                if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) fits++;
-            }
-            if (fits > best_fit) {
-                best_fit = fits;
-                best_gy = gy_try;
-                if (fits == word_len) break;
+        if (s_settings.max_char_size >= 4) {
+            static const int cand_gy[6] = { 30, 11, 27, 14, 33, 8 };
+            static const int cand_gx[5] = { 6, 4, 8, 2, 10 };
+            for (int r = 0; r < 6 && !placed; r++) {
+                for (int c = 0; c < 5 && !placed; c++) {
+                    placed = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                    span_x, span_y, date_word, 6,
+                                                    cand_gx[c], cand_gy[r], 6, 8,
+                                                    minute_salt, fg_color);
+                }
             }
         }
 
-        for (int i = 0; i < word_len && date_word[i] != '\0'; i++) {
-            int g_idx = find_glyph_index(date_word[i]);
-            int gx = start_gx + i * dw;
-            int gy_jitter = (s_settings.imperfection >= 25)
-                            ? ((int)(fast_hash(i, minute_salt, 7) % 3) - 1) : 0;
-            int gy = best_gy + gy_jitter;
-            int16_t bx = origin_x + (gx * span_x) / SUB_N;
-            int16_t by = origin_y + (gy * span_y) / SUB_N;
-            int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+        if (!placed) {
+            static const int cand_gy[7] = { 30, 12, 26, 16, 34, 8, 21 };
+            static const int cand_gx[5] = { 12, 8, 16, 2, 22 };
+            for (int r = 0; r < 7 && !placed; r++) {
+                for (int c = 0; c < 5 && !placed; c++) {
+                    placed = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                    span_x, span_y, date_word, 6,
+                                                    cand_gx[c], cand_gy[r], 4, 6,
+                                                    minute_salt, fg_color);
+                }
+            }
+        }
 
-            if (subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) &&
-                glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
-                draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
-                subgrid_occupy(occ, gx, gy, dw, dh);
+        // Stacked 2-line quadrant fallback ("SAT" over "31")
+        if (!placed) {
+            static const int q_gx[6] = { 30, 6, 30, 6, 4, 32 };
+            static const int q_gy[6] = { 26, 26, 11, 11, 18, 18 };
+            for (int q = 0; q < 6 && !placed; q++) {
+                int dw = 4, dh = 6;
+                int gx0 = q_gx[q], gy0 = q_gy[q];
+                bool ok = true;
+                for (int i = 0; i < 3 && ok; i++) {
+                    int gx = gx0 + i * dw;
+                    int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                    int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                    int16_t by = origin_y + (gy0 * span_y) / SUB_N;
+                    int16_t bh = origin_y + ((gy0 + dh) * span_y) / SUB_N - by;
+                    uint8_t qv[4];
+                    if (!subgrid_is_free(occ, SUB_N, gx, gy0, dw, dh) ||
+                        sample_rect_quadrants(geom, bx, by, bw, bh, qv) < 45 ||
+                        !glyph_fits_cleanly(geom, find_glyph_index(s_day_names[wday][i]), bx, by, bw, bh)) {
+                        ok = false;
+                    }
+                }
+                for (int i = 0; i < 2 && ok; i++) {
+                    int gx = gx0 + 2 + i * dw;
+                    int gy = gy0 + dh;
+                    int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                    int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                    int16_t by = origin_y + (gy * span_y) / SUB_N;
+                    int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+                    uint8_t qv[4];
+                    if (!subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) ||
+                        sample_rect_quadrants(geom, bx, by, bw, bh, qv) < 45 ||
+                        !glyph_fits_cleanly(geom, find_glyph_index(num_word[i]), bx, by, bw, bh)) {
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                           span_x, span_y, s_day_names[wday], 3,
+                                           gx0, gy0, dw, dh, 0, fg_color);
+                    try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                           span_x, span_y, num_word, 2,
+                                           gx0 + 2, gy0 + dh, dw, dh, 0, fg_color);
+                    placed = true;
+                }
             }
         }
     }
@@ -943,7 +1127,8 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
 
             int16_t mid_x = bx + bw / 2;
             int16_t mid_y = by + bh / 2;
-            if (!geom->is_full_rect && lvl == min_lvl && total_cov < 27 && !is_near_hands(geom, mid_x, mid_y)) {
+            bool near_hand = is_near_hands(geom, mid_x, mid_y);
+            if (!geom->is_full_rect && lvl == min_lvl && total_cov < 27 && !near_hand) {
                 int skip_chance = (total_cov <= 18) ? (int)s_settings.imperfection
                                                     : ((int)s_settings.imperfection / 2);
                 if ((int)((h >> 19) % 100) < skip_chance) continue;
@@ -962,6 +1147,9 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
                 }
             } else {
                 g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, allow_punct, allow_micro, h);
+                if (g_idx < 0 && near_hand && !allow_punct && s_settings.punct_ratio > 0) {
+                    g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, true, total_cov <= 15, h);
+                }
             }
 
             if (g_idx >= 0) {
@@ -999,6 +1187,9 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
                     g_idx = glyph_fits_cleanly(geom, cand, bx, by, bw, bh) ? cand : -1;
                 } else {
                     g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, false, false, h);
+                    if (g_idx < 0 && near_hand && s_settings.punct_ratio > 0) {
+                        g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, true, total_cov <= 15, h);
+                    }
                 }
                 if (g_idx >= 0) {
                     draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
@@ -1050,10 +1241,10 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     if (geom.is_full_rect) {
         int16_t h_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, h_angle);
         int16_t m_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, m_angle);
-        h_len = (h_edge * 54) / 100;
+        h_len = (h_edge * 57) / 100;
         m_len = (m_edge * 94) / 100;
     } else {
-        h_len = (geom.r_dial * 52) / 100;
+        h_len = (geom.r_dial * 57) / 100;
         m_len = geom.r_dial + (dial_span / 24);
     }
 

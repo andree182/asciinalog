@@ -7,12 +7,12 @@ var DEFAULTS = {
   MAX_CHAR_SIZE: 5,
   BIG_CHAR_BIAS: 72,
   PUNCT_RATIO: 12,
-  IMPERFECTION: 35,
+  IMPERFECTION: 30,
   SHOW_DATE: 1,
   INVERT_COLORS: 0,
   FILL_MODE: 0,          // 0 = Circular Dial, 1 = Full Screen Rectangle
-  LAYOUT_STYLE: 0,       // 0 = Semi-Grid Rows with Big Glyphs, 1 = Organic Collage
-  GREY_COMPLICATIONS: 0  // 0 = Off (white), 1 = On (dithered on B&W, light grey on color)
+  LAYOUT_STYLE: 0,       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+  GREY_COMPLICATIONS: 1  // 0 = Off (solid), 1 = On (dithered on B&W, light grey on color)
 };
 
 function loadSettings() {
