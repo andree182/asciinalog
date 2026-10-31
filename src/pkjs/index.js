@@ -9,7 +9,10 @@ var DEFAULTS = {
   PUNCT_RATIO: 12,
   IMPERFECTION: 35,
   SHOW_DATE: 1,
-  INVERT_COLORS: 0
+  INVERT_COLORS: 0,
+  FILL_MODE: 0,          // 0 = Circular Dial, 1 = Full Screen Rectangle
+  LAYOUT_STYLE: 0,       // 0 = Semi-Grid Rows with Big Glyphs, 1 = Organic Collage
+  GREY_COMPLICATIONS: 0  // 0 = Off (white), 1 = On (dithered on B&W, light grey on color)
 };
 
 function loadSettings() {
@@ -47,6 +50,7 @@ function buildConfigHtml(s) {
     '.hint{color:#888;font-size:11px;margin-top:4px;}',
     'input[type=range]{width:100%;accent-color:#fff;}',
     'input[type=checkbox]{transform:scale(1.3);}',
+    'select{background:#262626;color:#fff;border:1px solid #444;border-radius:6px;padding:6px 8px;font-family:monospace;font-size:12px;width:100%;margin-top:4px;}',
     '.presets{display:flex;gap:8px;margin-bottom:12px;}',
     '.presets button{flex:1;background:#262626;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px 4px;font-family:monospace;font-size:11px;cursor:pointer;}',
     '.save{width:100%;background:#fff;color:#000;border:none;border-radius:8px;padding:14px;font-family:monospace;font-size:15px;font-weight:bold;cursor:pointer;margin-top:6px;}',
@@ -54,10 +58,24 @@ function buildConfigHtml(s) {
     '<h1>*ASCIInalog*</h1>',
     '<div class="sub">Multi-scale ASCII analog watchface</div>',
     '<div class="presets">',
-    '<button type="button" onclick="preset(2,5,72,12,35)">Balanced</button>',
-    '<button type="button" onclick="preset(3,6,88,8,30)">Chunky Big</button>',
-    '<button type="button" onclick="preset(1,4,50,18,45)">Fine Gritty</button>',
+    '<button type="button" onclick="preset(0,0,2,5,75,12,30)">Semi-Grid</button>',
+    '<button type="button" onclick="preset(1,0,2,5,75,12,30)">Full Rect</button>',
+    '<button type="button" onclick="preset(0,1,2,5,70,12,40)">Organic</button>',
     '</div>',
+
+    '<div class="card"><div class="row"><label>Screen Fill Mode</label></div>',
+    '<select id="fill_mode">',
+    '<option value="0"' + (s.FILL_MODE === 0 ? ' selected' : '') + '>Circular Dial (Classic Clock)</option>',
+    '<option value="1"' + (s.FILL_MODE === 1 ? ' selected' : '') + '>Full Screen Rectangle (Edge to Edge)</option>',
+    '</select>',
+    '<div class="hint">Full Screen fills rectangular watches edge-to-edge; hands reach screen borders.</div></div>',
+
+    '<div class="card"><div class="row"><label>Layout Arrangement</label></div>',
+    '<select id="layout_style">',
+    '<option value="0"' + (s.LAYOUT_STYLE === 0 ? ' selected' : '') + '>Semi-Grid Rows with Big Hero Glyphs (whattimeisit style)</option>',
+    '<option value="1"' + (s.LAYOUT_STYLE === 1 ? ' selected' : '') + '>Organic Multi-scale Collage</option>',
+    '</select>',
+    '<div class="hint">Semi-Grid retains row-aligned flow with large glyphs; Organic scatters irregular blocks.</div></div>',
 
     '<div class="card"><div class="row"><label>Min Character Size</label><span class="val" id="v_min">' + s.MIN_CHAR_SIZE + '</span></div>',
     '<input type="range" id="min_size" min="1" max="4" step="1" value="' + s.MIN_CHAR_SIZE + '" oninput="sync()">',
@@ -69,7 +87,7 @@ function buildConfigHtml(s) {
 
     '<div class="card"><div class="row"><label>Big Character Focus</label><span class="val" id="v_bias">' + s.BIG_CHAR_BIAS + '%</span></div>',
     '<input type="range" id="bias" min="0" max="100" step="5" value="' + s.BIG_CHAR_BIAS + '" oninput="sync()">',
-    '<div class="hint">Higher = fills open areas aggressively with large hero letters/digits</div></div>',
+    '<div class="hint">Higher = fills open bands aggressively with large hero letters/digits</div></div>',
 
     '<div class="card"><div class="row"><label>Punctuation Allowance</label><span class="val" id="v_punct">' + s.PUNCT_RATIO + '%</span></div>',
     '<input type="range" id="punct" min="0" max="50" step="2" value="' + s.PUNCT_RATIO + '" oninput="sync()">',
@@ -81,7 +99,11 @@ function buildConfigHtml(s) {
 
     '<div class="card"><div class="row"><label>Show Day/Date Word</label>',
     '<input type="checkbox" id="show_date"' + (s.SHOW_DATE ? ' checked' : '') + '></div>',
-    '<div class="hint">Embeds current day &amp; date (e.g. SAT-31) into the collage</div></div>',
+    '<div class="hint">Embeds current day &amp; date (e.g. SAT-31) into the watchface</div></div>',
+
+    '<div class="card"><div class="row"><label>Greyscale / Dithered Complications</label>',
+    '<input type="checkbox" id="grey_comp"' + (s.GREY_COMPLICATIONS ? ' checked' : '') + '></div>',
+    '<div class="hint">Renders complications in greyscale (50% stipple on B&W, light grey on color)</div></div>',
 
     '<div class="card"><div class="row"><label>Invert Colors (Black on White)</label>',
     '<input type="checkbox" id="invert"' + (s.INVERT_COLORS ? ' checked' : '') + '></div></div>',
@@ -98,7 +120,8 @@ function buildConfigHtml(s) {
     '  el("v_punct").textContent=el("punct").value+"%";',
     '  el("v_imp").textContent=el("imp").value+"%";',
     '}',
-    'function preset(mn,mx,b,p,i){',
+    'function preset(fm,ls,mn,mx,b,p,i){',
+    '  el("fill_mode").value=fm;el("layout_style").value=ls;',
     '  el("min_size").value=mn;el("max_size").value=mx;el("bias").value=b;',
     '  el("punct").value=p;el("imp").value=i;sync();',
     '}',
@@ -109,12 +132,15 @@ function buildConfigHtml(s) {
     'function save(){',
     '  sync();',
     '  var data={',
+    '    FILL_MODE:parseInt(el("fill_mode").value,10),',
+    '    LAYOUT_STYLE:parseInt(el("layout_style").value,10),',
     '    MIN_CHAR_SIZE:parseInt(el("min_size").value,10),',
     '    MAX_CHAR_SIZE:parseInt(el("max_size").value,10),',
     '    BIG_CHAR_BIAS:parseInt(el("bias").value,10),',
     '    PUNCT_RATIO:parseInt(el("punct").value,10),',
     '    IMPERFECTION:parseInt(el("imp").value,10),',
     '    SHOW_DATE:el("show_date").checked?1:0,',
+    '    GREY_COMPLICATIONS:el("grey_comp").checked?1:0,',
     '    INVERT_COLORS:el("invert").checked?1:0',
     '  };',
     '  location.href=getReturnTo()+encodeURIComponent(JSON.stringify(data));',

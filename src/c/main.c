@@ -2,22 +2,28 @@
 
 // ============================================================================
 // ASCIInalog Watchface
-// Multi-scale irregular ASCII collage with negative-space analog hands,
-// AAlib glyph-pixel coverage contouring, organic imperfections, and PKJS config.
+// Multi-scale ASCII analog watchface with negative-space hands, AAlib quadrant
+// pixel-coverage contouring, configurable screen fill (circular vs full rect),
+// layout styles (multi-scale semi-grid vs organic collage), and greyscale
+// (50% dithered on B&W, light grey on color) complications.
 // ============================================================================
 
 #define SUB_N 48
 #define SUB_CELLS (SUB_N * SUB_N)
-#define SETTINGS_PERSIST_KEY 101
+#define MAX_GRID_ROWS 36
+#define SETTINGS_PERSIST_KEY 102
 
 typedef struct {
-    uint8_t min_char_size; // 1..4 (default 2)
-    uint8_t max_char_size; // 3..6 (default 5)
-    uint8_t big_char_bias; // 0..100 (default 72)
-    uint8_t punct_ratio;   // 0..50 (default 12)
-    uint8_t imperfection;  // 0..100 (default 35)
-    uint8_t show_date;     // 0 or 1 (default 1)
-    uint8_t invert_colors; // 0 or 1 (default 0)
+    uint8_t min_char_size;      // 1..4 (default 2)
+    uint8_t max_char_size;      // 3..6 (default 5)
+    uint8_t big_char_bias;      // 0..100 (default 72)
+    uint8_t punct_ratio;        // 0..50 (default 12)
+    uint8_t imperfection;       // 0..100 (default 30)
+    uint8_t show_date;          // 0 or 1 (default 1)
+    uint8_t invert_colors;      // 0 or 1 (default 0)
+    uint8_t fill_mode;          // 0 = Circular Dial, 1 = Full Screen Rectangle
+    uint8_t layout_style;       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+    uint8_t grey_complications; // 0 = Solid Foreground, 1 = Greyscale / Dithered
 } WatchSettings;
 
 static WatchSettings s_settings;
@@ -27,7 +33,6 @@ static struct tm s_current_time;
 
 // ============================================================================
 // 8x8 BOLD RETRO PIXEL FONT (Active 7x7 in rows 0..6, bits 7..1; 1px spacing)
-// GF_DENSE glyphs fill all 4 quadrants strongly so interior has no false gaps.
 // ============================================================================
 
 #define GF_DENSE 0x01
@@ -41,7 +46,7 @@ typedef struct {
 } GlyphDef;
 
 static const GlyphDef s_glyphs[] = {
-    // --- Bold Full-Height Digits & Uppercase (Core Interior Collage Pool) ---
+    // --- Bold Full-Height Digits & Uppercase Letters ---
     { '0', GF_DENSE, { 0x7C, 0xFE, 0xEE, 0xFE, 0xEE, 0xFE, 0x7C, 0x00 } },
     { '1', 0,        { 0x38, 0x78, 0xF8, 0x38, 0x38, 0xFE, 0xFE, 0x00 } },
     { '2', GF_DENSE, { 0x7C, 0xFE, 0x8E, 0x3C, 0x70, 0xFE, 0xFE, 0x00 } },
@@ -80,7 +85,7 @@ static const GlyphDef s_glyphs[] = {
     { 'Y', 0,        { 0xC6, 0xEE, 0x7C, 0x38, 0x38, 0x38, 0x38, 0x00 } },
     { 'Z', GF_DENSE, { 0xFE, 0xFE, 0x1C, 0x38, 0x70, 0xFE, 0xFE, 0x00 } },
 
-    // --- Bold Full-Height & Asymmetric Lowercase Letters ---
+    // --- Lowercase Letters ---
     { 'a', GF_DENSE, { 0x7C, 0xFE, 0x0E, 0x7E, 0xEE, 0xFE, 0x7E, 0x00 } },
     { 'b', GF_DENSE, { 0xE0, 0xE0, 0xFC, 0xFE, 0xEE, 0xFE, 0xFC, 0x00 } },
     { 'c', 0,        { 0x00, 0x00, 0x7E, 0xE0, 0xE0, 0xE0, 0x7E, 0x00 } },
@@ -105,7 +110,7 @@ static const GlyphDef s_glyphs[] = {
     { 'y', 0,        { 0x00, 0xC6, 0xC6, 0xFE, 0x7E, 0x0E, 0x7C, 0x00 } },
     { 'z', 0,        { 0x00, 0x00, 0xFE, 0x1C, 0x38, 0x70, 0xFE, 0x00 } },
 
-    // --- Expressive Bold Symbols (Capped by punct_ratio) ---
+    // --- Bold Symbols ---
     { '*', GF_DENSE | GF_PUNCT, { 0x00, 0xD6, 0x7C, 0xFE, 0x7C, 0xD6, 0x00, 0x00 } },
     { '?', GF_PUNCT,            { 0x7C, 0xFE, 0xC6, 0x1C, 0x38, 0x00, 0x38, 0x00 } },
     { '$', GF_DENSE | GF_PUNCT, { 0x38, 0x7E, 0xF0, 0x7C, 0x1E, 0xFC, 0x38, 0x00 } },
@@ -122,7 +127,7 @@ static const GlyphDef s_glyphs[] = {
     { '/', GF_PUNCT,            { 0x06, 0x0E, 0x1C, 0x38, 0x70, 0xE0, 0xC0, 0x00 } },
     { '\\',GF_PUNCT,            { 0xC0, 0xE0, 0x70, 0x38, 0x1C, 0x0E, 0x06, 0x00 } },
 
-    // --- Micro Punctuation (Strictly Limited) ---
+    // --- Micro Punctuation ---
     { '-', GF_PUNCT | GF_MICRO, { 0x00, 0x00, 0x00, 0xFE, 0xFE, 0x00, 0x00, 0x00 } },
     { '_', GF_PUNCT | GF_MICRO, { 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xFE, 0x00 } },
     { '.', GF_PUNCT | GF_MICRO, { 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x38, 0x00 } },
@@ -191,13 +196,16 @@ static int find_glyph_index(char ch) {
 // ============================================================================
 
 static void set_default_settings(void) {
-    s_settings.min_char_size = 2;
-    s_settings.max_char_size = 5;
-    s_settings.big_char_bias = 72;
-    s_settings.punct_ratio   = 12;
-    s_settings.imperfection  = 35;
-    s_settings.show_date     = 1;
-    s_settings.invert_colors = 0;
+    s_settings.min_char_size      = 2;
+    s_settings.max_char_size      = 5;
+    s_settings.big_char_bias      = 72;
+    s_settings.punct_ratio        = 12;
+    s_settings.imperfection       = 30;
+    s_settings.show_date          = 1;
+    s_settings.invert_colors      = 0;
+    s_settings.fill_mode          = 0; // 0 = Circular Dial, 1 = Full Screen Rectangle
+    s_settings.layout_style       = 0; // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+    s_settings.grey_complications = 1; // 1 = Dithered on B&W / LightGrey on Color
 }
 
 static void clamp_settings(void) {
@@ -211,6 +219,12 @@ static void clamp_settings(void) {
     if (s_settings.big_char_bias > 100) s_settings.big_char_bias = 100;
     if (s_settings.punct_ratio > 50) s_settings.punct_ratio = 50;
     if (s_settings.imperfection > 100) s_settings.imperfection = 100;
+    if (s_settings.fill_mode > 1) s_settings.fill_mode = 1;
+    if (s_settings.layout_style > 1) s_settings.layout_style = 1;
+    if (s_settings.grey_complications > 1) s_settings.grey_complications = 1;
+#if defined(PBL_ROUND)
+    s_settings.fill_mode = 0;
+#endif
 }
 
 static void load_settings(void) {
@@ -243,13 +257,16 @@ static int tuple_to_int(const Tuple *t) {
 
 static void inbox_received_callback(DictionaryIterator *iter, void *context) {
     Tuple *t;
-    if ((t = dict_find(iter, MESSAGE_KEY_MIN_CHAR_SIZE))) s_settings.min_char_size = (uint8_t)tuple_to_int(t);
-    if ((t = dict_find(iter, MESSAGE_KEY_MAX_CHAR_SIZE))) s_settings.max_char_size = (uint8_t)tuple_to_int(t);
-    if ((t = dict_find(iter, MESSAGE_KEY_BIG_CHAR_BIAS))) s_settings.big_char_bias = (uint8_t)tuple_to_int(t);
-    if ((t = dict_find(iter, MESSAGE_KEY_PUNCT_RATIO)))   s_settings.punct_ratio   = (uint8_t)tuple_to_int(t);
-    if ((t = dict_find(iter, MESSAGE_KEY_IMPERFECTION)))  s_settings.imperfection  = (uint8_t)tuple_to_int(t);
-    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_DATE)))     s_settings.show_date     = (uint8_t)(tuple_to_int(t) ? 1 : 0);
-    if ((t = dict_find(iter, MESSAGE_KEY_INVERT_COLORS))) s_settings.invert_colors = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_MIN_CHAR_SIZE)))      s_settings.min_char_size      = (uint8_t)tuple_to_int(t);
+    if ((t = dict_find(iter, MESSAGE_KEY_MAX_CHAR_SIZE)))      s_settings.max_char_size      = (uint8_t)tuple_to_int(t);
+    if ((t = dict_find(iter, MESSAGE_KEY_BIG_CHAR_BIAS)))      s_settings.big_char_bias      = (uint8_t)tuple_to_int(t);
+    if ((t = dict_find(iter, MESSAGE_KEY_PUNCT_RATIO)))        s_settings.punct_ratio        = (uint8_t)tuple_to_int(t);
+    if ((t = dict_find(iter, MESSAGE_KEY_IMPERFECTION)))       s_settings.imperfection       = (uint8_t)tuple_to_int(t);
+    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_DATE)))          s_settings.show_date          = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_INVERT_COLORS)))      s_settings.invert_colors      = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_FILL_MODE)))          s_settings.fill_mode          = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_LAYOUT_STYLE)))       s_settings.layout_style       = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_GREY_COMPLICATIONS))) s_settings.grey_complications = (uint8_t)(tuple_to_int(t) ? 1 : 0);
 
     save_settings();
     if (s_canvas_layer) {
@@ -264,6 +281,7 @@ static void inbox_received_callback(DictionaryIterator *iter, void *context) {
 typedef struct {
     int16_t screen_w, screen_h;
     int16_t cx, cy;
+    bool is_full_rect;
     int16_t r_dial;
     int32_t r_dial_sq;
     int32_t r_rim_max_sq;
@@ -273,11 +291,13 @@ typedef struct {
     int16_t h_x0, h_y0, h_dx, h_dy;
     int32_t h_len_sq;
     int32_t h_core_w_sq;
+    int32_t h_near_w_sq;
 
     // Minute hand capsule
     int16_t m_x0, m_y0, m_dx, m_dy;
     int32_t m_len_sq;
     int32_t m_core_w_sq;
+    int32_t m_near_w_sq;
 } DialGeometry;
 
 static bool point_in_capsule(int16_t px, int16_t py,
@@ -317,11 +337,29 @@ static bool is_in_hand_core(const DialGeometry *g, int16_t px, int16_t py) {
     return false;
 }
 
+static bool is_near_hands(const DialGeometry *g, int16_t px, int16_t py) {
+    if (point_in_capsule(px, py, g->h_x0, g->h_y0, g->h_dx, g->h_dy,
+                         g->h_len_sq, g->h_near_w_sq)) {
+        return true;
+    }
+    if (point_in_capsule(px, py, g->m_x0, g->m_y0, g->m_dx, g->m_dy,
+                         g->m_len_sq, g->m_near_w_sq)) {
+        return true;
+    }
+    return false;
+}
+
 static bool is_foreground_point(const DialGeometry *g, int16_t px, int16_t py) {
-    int32_t dx = px - g->cx;
-    int32_t dy = py - g->cy;
-    if ((dx * dx + dy * dy) > g->r_dial_sq) {
-        return false;
+    if (g->is_full_rect) {
+        if (px < 2 || px >= g->screen_w - 2 || py < 2 || py >= g->screen_h - 2) {
+            return false;
+        }
+    } else {
+        int32_t dx = px - g->cx;
+        int32_t dy = py - g->cy;
+        if ((dx * dx + dy * dy) > g->r_dial_sq) {
+            return false;
+        }
     }
     return !is_in_hand_core(g, px, py);
 }
@@ -347,8 +385,30 @@ static int sample_rect_quadrants(const DialGeometry *g,
     return (int)q_out[0] + (int)q_out[1] + (int)q_out[2] + (int)q_out[3];
 }
 
-// Check every active bit of glyph_idx so ZERO pixels land inside the clock hands
-// and at most ~20% protrude organically outside the dial circle.
+// Distance from center (cx, cy) to bounding rectangle [4, 4, sw-4, sh-4] along angle
+static int16_t ray_to_rect_distance(int16_t cx, int16_t cy, int16_t sw, int16_t sh, int32_t angle) {
+    int32_t sin_val = sin_lookup(angle);
+    int32_t cos_val = cos_lookup(angle);
+    int32_t d_x = 32767, d_y = 32767;
+
+    if (sin_val > 500) {
+        d_x = ((int32_t)(sw - 4 - cx) * TRIG_MAX_RATIO) / sin_val;
+    } else if (sin_val < -500) {
+        d_x = ((int32_t)(cx - 4) * TRIG_MAX_RATIO) / (-sin_val);
+    }
+
+    if (cos_val > 500) {
+        d_y = ((int32_t)(cy - 4) * TRIG_MAX_RATIO) / cos_val;
+    } else if (cos_val < -500) {
+        d_y = ((int32_t)(sh - 4 - cy) * TRIG_MAX_RATIO) / (-cos_val);
+    }
+
+    int32_t dist = (d_x < d_y) ? d_x : d_y;
+    if (dist < 20) dist = 20;
+    if (dist > 300) dist = 300;
+    return (int16_t)dist;
+}
+
 static bool glyph_fits_cleanly(const DialGeometry *g, int glyph_idx,
                                int16_t x0, int16_t y0, int16_t bw, int16_t bh) {
     if (x0 < 1 || y0 < 1 || (x0 + bw) >= g->screen_w - 1 || (y0 + bh) >= g->screen_h - 1) {
@@ -372,32 +432,34 @@ static bool glyph_fits_cleanly(const DialGeometry *g, int glyph_idx,
                 int16_t px1 = x0 + ((c + 1) * bw) / 8;
                 int16_t px_mid = (px0 + px1) / 2;
 
-                // Test center and corners on large glyphs so big blocks never clip into hands
                 if (is_in_hand_core(g, px_mid, py_mid)) {
                     return false;
                 }
-                if (bw >= 20 && (is_in_hand_core(g, px0, py0) || is_in_hand_core(g, px1 - 1, py1 - 1))) {
+                if (bw >= 18 && (is_in_hand_core(g, px0, py0) || is_in_hand_core(g, px1 - 1, py1 - 1))) {
                     return false;
                 }
 
-                int32_t dx = px_mid - g->cx;
-                int32_t dy = py_mid - g->cy;
-                int32_t d2 = dx * dx + dy * dy;
-                if (d2 > g->r_rim_max_sq) {
-                    return false;
-                }
-                if (d2 > g->r_dial_sq) {
-                    outside_dial_bits++;
+                if (!g->is_full_rect) {
+                    int32_t dx = px_mid - g->cx;
+                    int32_t dy = py_mid - g->cy;
+                    int32_t d2 = dx * dx + dy * dy;
+                    if (d2 > g->r_rim_max_sq) {
+                        return false;
+                    }
+                    if (d2 > g->r_dial_sq) {
+                        outside_dial_bits++;
+                    }
                 }
             }
         }
     }
     if (total_bits == 0) return false;
+    if (g->is_full_rect) return true;
     return (outside_dial_bits * 9) <= (total_bits * 2);
 }
 
 // ============================================================================
-// HASHING, AALIB MATCHING & SUB-GRID OCCUPANCY
+// HASHING, AALIB MATCHING & DRAWING
 // ============================================================================
 
 static uint32_t fast_hash(int a, int b, int salt) {
@@ -406,8 +468,8 @@ static uint32_t fast_hash(int a, int b, int salt) {
     return h ^ (h >> 16);
 }
 
-static bool subgrid_is_free(const uint64_t occ[SUB_N], int gx, int gy, int gw, int gh) {
-    if (gx < 0 || gy < 0 || (gx + gw) > SUB_N || (gy + gh) > SUB_N) {
+static bool subgrid_is_free(const uint64_t occ[], int max_n, int gx, int gy, int gw, int gh) {
+    if (gx < 0 || gy < 0 || (gx + gw) > max_n || (gy + gh) > max_n) {
         return false;
     }
     uint64_t mask = (((uint64_t)1 << gw) - 1ULL) << gx;
@@ -417,7 +479,7 @@ static bool subgrid_is_free(const uint64_t occ[SUB_N], int gx, int gy, int gw, i
     return true;
 }
 
-static void subgrid_occupy(uint64_t occ[SUB_N], int gx, int gy, int gw, int gh) {
+static void subgrid_occupy(uint64_t occ[], int gx, int gy, int gw, int gh) {
     uint64_t mask = (((uint64_t)1 << gw) - 1ULL) << gx;
     for (int y = gy; y < gy + gh; y++) {
         occ[y] |= mask;
@@ -430,7 +492,7 @@ static int match_contour_glyph(const DialGeometry *geom,
                                bool allow_punct, bool allow_micro, uint32_t seed) {
     int best_idx = -1;
     int32_t best_err = 0x7FFFFFFF;
-    uint32_t jitter_amp = 52U + ((uint32_t)s_settings.imperfection * 2U) / 3U;
+    uint32_t jitter_amp = 42U + ((uint32_t)s_settings.imperfection * 2U) / 3U;
 
     for (int i = 0; i < NUM_GLYPHS; i++) {
         uint8_t flags = s_glyphs[i].flags;
@@ -441,11 +503,10 @@ static int match_contour_glyph(const DialGeometry *geom,
         for (int k = 0; k < 4; k++) {
             int32_t diff = (int32_t)s_glyph_q[i][k] - (int32_t)q[k];
             if (q[k] == 0 && s_glyph_q[i][k] > 1) {
-                err += diff * diff * 3;
+                err += diff * diff * 4;
             } else if (diff > 0) {
                 err += diff * diff * 2;
             } else {
-                // Favor fuller coverage in foreground quadrants so hand edges look crisp
                 err += (diff * diff * 3) / 2;
             }
         }
@@ -467,9 +528,28 @@ static int match_contour_glyph(const DialGeometry *geom,
 }
 
 static void draw_glyph(GContext *ctx, int glyph_idx,
-                       int16_t x0, int16_t y0, int16_t box_w, int16_t box_h) {
+                       int16_t x0, int16_t y0, int16_t box_w, int16_t box_h,
+                       bool is_complication, GColor fg_color) {
     if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
     const uint8_t *rows = s_glyphs[glyph_idx].rows;
+
+    bool dither = false;
+#if defined(PBL_COLOR)
+    if (is_complication && s_settings.grey_complications) {
+        GColor c = s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
+        graphics_context_set_fill_color(ctx, c);
+        graphics_context_set_stroke_color(ctx, c);
+    } else {
+        graphics_context_set_fill_color(ctx, fg_color);
+        graphics_context_set_stroke_color(ctx, fg_color);
+    }
+#else
+    if (is_complication && s_settings.grey_complications) {
+        dither = true;
+    }
+    graphics_context_set_fill_color(ctx, fg_color);
+    graphics_context_set_stroke_color(ctx, fg_color);
+#endif
 
     for (int r = 0; r < 7; r++) {
         uint8_t row_bits = rows[r];
@@ -480,119 +560,281 @@ static void draw_glyph(GContext *ctx, int glyph_idx,
         int16_t rh = py1 - py0;
         if (rh <= 0) rh = 1;
 
-        int c = 0;
-        while (c < 7) {
-            if (row_bits & (1 << (7 - c))) {
-                int c_start = c;
-                while (c < 7 && (row_bits & (1 << (7 - c)))) {
+        if (dither) {
+            for (int c = 0; c < 7; c++) {
+                if (row_bits & (1 << (7 - c))) {
+                    int16_t px0 = x0 + (c * box_w) / 8;
+                    int16_t px1 = x0 + ((c + 1) * box_w) / 8;
+                    int16_t rw = px1 - px0;
+                    if (rw <= 0) rw = 1;
+                    for (int dy = 0; dy < rh; dy++) {
+                        for (int dx = 0; dx < rw; dx++) {
+                            if (((px0 + dx + py0 + dy) & 1) == 0) {
+                                graphics_draw_pixel(ctx, GPoint(px0 + dx, py0 + dy));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            int c = 0;
+            while (c < 7) {
+                if (row_bits & (1 << (7 - c))) {
+                    int c_start = c;
+                    while (c < 7 && (row_bits & (1 << (7 - c)))) {
+                        c++;
+                    }
+                    int16_t px0 = x0 + (c_start * box_w) / 8;
+                    int16_t px1 = x0 + (c * box_w) / 8;
+                    int16_t rw = px1 - px0;
+                    if (rw <= 0) rw = 1;
+                    graphics_fill_rect(ctx, GRect(px0, py0, rw, rh), 0, GCornerNone);
+                } else {
                     c++;
                 }
-                int16_t px0 = x0 + (c_start * box_w) / 8;
-                int16_t px1 = x0 + (c * box_w) / 8;
-                int16_t rw = px1 - px0;
-                if (rw <= 0) rw = 1;
-                graphics_fill_rect(ctx, GRect(px0, py0, rw, rh), 0, GCornerNone);
+            }
+        }
+    }
+}
+
+static const char * const s_day_names[7] = {
+    "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
+};
+
+// ============================================================================
+// LAYOUT 0: MULTI-SCALE QUADTREE SEMI-GRID
+// Clean grid alignment like our original semi-grid, PLUS large 4x4 (32px),
+// 3x3 (24px), and 2x2 (16px) hero blocks that automatically subdivide down to
+// 1x1 (8px) around the clock hands so hands ALWAYS stay razor-sharp & visible!
+// ============================================================================
+
+static bool grid_rect_free(const uint32_t occ[], int cols, int rows,
+                           int gx, int gy, int gw, int gh) {
+    if (gx < 0 || gy < 0 || (gx + gw) > cols || (gy + gh) > rows) {
+        return false;
+    }
+    uint32_t mask = ((1U << gw) - 1U) << gx;
+    for (int y = gy; y < gy + gh; y++) {
+        if (occ[y] & mask) return false;
+    }
+    return true;
+}
+
+static void grid_rect_occupy(uint32_t occ[], int gx, int gy, int gw, int gh) {
+    uint32_t mask = ((1U << gw) - 1U) << gx;
+    for (int y = gy; y < gy + gh; y++) {
+        occ[y] |= mask;
+    }
+}
+
+static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
+    GRect bounds = layer_get_bounds(layer);
+    int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
+    int16_t cell_s = min_dim / 25; // 8px on Emery, 5-6px on 144x168, 10px on Gabbro
+    if (cell_s < 6) cell_s = 6;
+
+    int cols = geom->is_full_rect ? ((bounds.size.w - 4) / cell_s) : 24;
+    int rows = geom->is_full_rect ? ((bounds.size.h - 4) / cell_s) : 24;
+    if (cols > 30) cols = 30;
+    if (rows > MAX_GRID_ROWS) rows = MAX_GRID_ROWS;
+
+    int16_t origin_x = (bounds.size.w - cols * cell_s) / 2;
+    int16_t origin_y = (bounds.size.h - rows * cell_s) / 2;
+
+    uint32_t occ[MAX_GRID_ROWS];
+    for (int r = 0; r < rows; r++) occ[r] = 0U;
+
+    int minute_salt = s_current_time.tm_hour * 60 + s_current_time.tm_min;
+
+    // 1. Optional Complication Banner (e.g. "*SAT-31*" or "SAT-31")
+    // Any banner letter hit by a clock hand is NOT drawn at 3x4 size; instead its
+    // cells remain free so Steps 2-3 subdivide cleanly right up to the hand border!
+    if (s_settings.show_date) {
+        char date_word[10];
+        int wday = (s_current_time.tm_wday >= 0 && s_current_time.tm_wday < 7)
+                   ? s_current_time.tm_wday : 0;
+        int dw = (s_settings.max_char_size >= 5 && cols >= 22) ? 3 : 2;
+        int dh = (dw == 3) ? 4 : 3;
+        int word_len;
+        if (dw == 3) {
+            snprintf(date_word, sizeof(date_word), "%s-%02d", s_day_names[wday], s_current_time.tm_mday);
+            word_len = 6;
+        } else {
+            snprintf(date_word, sizeof(date_word), "*%s-%02d*", s_day_names[wday], s_current_time.tm_mday);
+            word_len = 8;
+        }
+        int start_gx = (cols - word_len * dw) / 2;
+        if (start_gx < 1) start_gx = 1;
+
+        int cand_gy[2] = { (rows * 62) / 100, (rows * 24) / 100 };
+        int best_gy = cand_gy[0];
+        int best_fit = -1;
+        for (int c = 0; c < 2; c++) {
+            int gy_try = cand_gy[c];
+            if (gy_try + dh >= rows) continue;
+            int fits = 0;
+            for (int i = 0; i < word_len; i++) {
+                int g_idx = find_glyph_index(date_word[i]);
+                int16_t bx = origin_x + (start_gx + i * dw) * cell_s;
+                int16_t by = origin_y + gy_try * cell_s;
+                if (glyph_fits_cleanly(geom, g_idx, bx, by, dw * cell_s, dh * cell_s)) {
+                    fits++;
+                }
+            }
+            if (fits > best_fit) {
+                best_fit = fits;
+                best_gy = gy_try;
+            }
+        }
+
+        for (int i = 0; i < word_len && date_word[i] != '\0'; i++) {
+            int gx = start_gx + i * dw;
+            int gy = best_gy;
+            int g_idx = find_glyph_index(date_word[i]);
+            int16_t bx = origin_x + gx * cell_s;
+            int16_t by = origin_y + gy * cell_s;
+            int16_t bw = dw * cell_s;
+            int16_t bh = dh * cell_s;
+
+            uint8_t q[4];
+            if (grid_rect_free(occ, cols, rows, gx, gy, dw, dh) &&
+                sample_rect_quadrants(geom, bx, by, bw, bh, q) >= 45 &&
+                glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+                draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
+                grid_rect_occupy(occ, gx, gy, dw, dh);
+            }
+        }
+    }
+
+    // 2. Multi-Scale Hero & Medium Grid Blocks (5x5, 4x4, 3x3, 2x2 cells)
+    // Map settings max_char_size (3..6) -> block size in cells (2..5)
+    int max_bs = (int)s_settings.max_char_size - 1; // lvl 5 -> 4x4 (32x32px), lvl 6 -> 5x5 (40x40px)
+    if (max_bs < 2) max_bs = 2;
+    if (max_bs > 5) max_bs = 5;
+
+    for (int bs = max_bs; bs >= 2; bs--) {
+        // Probability tuned by big_char_bias so big hero glyphs mix with stacked smaller rows
+        int accept_pct;
+        if (bs >= 4) {
+            accept_pct = (s_settings.big_char_bias * 55) / 100; // ~40% at bias 72
+        } else if (bs == 3) {
+            accept_pct = 15 + (s_settings.big_char_bias * 55) / 100; // ~55% at bias 72
+        } else {
+            accept_pct = 30 + (s_settings.big_char_bias * 50) / 100; // ~66% at bias 72
+        }
+
+        for (int gy = 0; gy <= rows - bs; gy++) {
+            for (int gx = 0; gx <= cols - bs; gx++) {
+                if (!grid_rect_free(occ, cols, rows, gx, gy, bs, bs)) {
+                    continue;
+                }
+                uint32_t h = fast_hash(gx, gy, bs * 37 + (minute_salt / 15));
+                if ((int)(h % 100) >= accept_pct) {
+                    continue;
+                }
+
+                int16_t bx = origin_x + gx * cell_s;
+                int16_t by = origin_y + gy * cell_s;
+                int16_t bw = bs * cell_s;
+                int16_t bh = bs * cell_s;
+
+                uint8_t q[4];
+                int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
+                // Strictly require full foreground (48) so multi-cell blocks never leave
+                // craters near the hands — obstructed blocks subdivide to smaller cells!
+                if (total_cov < 48) {
+                    continue;
+                }
+
+                bool allow_punct = ((int)((h >> 8) % 100) < (int)s_settings.punct_ratio);
+                int g_idx = (allow_punct && s_num_dense_punct > 0)
+                            ? s_dense_punct[(h >> 12) % s_num_dense_punct]
+                            : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
+
+                if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
+                    grid_rect_occupy(occ, gx, gy, bs, bs);
+                }
+            }
+        }
+    }
+
+    // 3. 1x1 Base Cells: Seal All Interior Gaps + Crisp AAlib Hand/Rim Contouring
+    for (int gy = 0; gy < rows; gy++) {
+        for (int gx = 0; gx < cols; gx++) {
+            if (!grid_rect_free(occ, cols, rows, gx, gy, 1, 1)) {
+                continue;
+            }
+
+            int16_t bx = origin_x + gx * cell_s;
+            int16_t by = origin_y + gy * cell_s;
+            uint8_t q[4];
+            int total_cov = sample_rect_quadrants(geom, bx, by, cell_s, cell_s, q);
+            if (total_cov == 0) {
+                continue;
+            }
+
+            uint32_t h = fast_hash(gx, gy, minute_salt + 97);
+            int16_t mid_x = bx + cell_s / 2;
+            int16_t mid_y = by + cell_s / 2;
+            bool near_hand = is_near_hands(geom, mid_x, mid_y);
+
+            // On outer circle rim (away from hands!), skip minor slivers per imperfection
+            if (!geom->is_full_rect && !near_hand && total_cov < 27) {
+                int skip_pct = (total_cov <= 15) ? ((int)s_settings.imperfection + 25)
+                                                 : ((int)s_settings.imperfection / 2);
+                if ((int)((h >> 16) % 100) < skip_pct) {
+                    continue;
+                }
+            }
+
+            bool allow_punct = ((int)((h >> 8) % 100) < (int)s_settings.punct_ratio);
+            bool allow_micro = allow_punct && (total_cov <= 18) && ((h & 0x3) == 0);
+
+            int g_idx = -1;
+            if (total_cov >= 45) {
+                int cand = (allow_punct && s_num_dense_punct > 0)
+                           ? s_dense_punct[(h >> 12) % s_num_dense_punct]
+                           : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
+                if (glyph_fits_cleanly(geom, cand, bx, by, cell_s, cell_s)) {
+                    g_idx = cand;
+                }
             } else {
-                c++;
+                g_idx = match_contour_glyph(geom, q, total_cov,
+                                            bx, by, cell_s, cell_s,
+                                            allow_punct, allow_micro, h);
+            }
+
+            if (g_idx >= 0) {
+                draw_glyph(ctx, g_idx, bx, by, cell_s, cell_s, false, fg_color);
+                grid_rect_occupy(occ, gx, gy, 1, 1);
             }
         }
     }
 }
 
 // ============================================================================
-// MULTI-SCALE IRREGULAR COLLAGE RENDERER
+// LAYOUT 1: ORGANIC COLLAGE (Scattered 48x48 Sub-grid Multi-Scale Packing)
 // ============================================================================
 
-static const char * const s_day_names[7] = {
-    "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
-};
-
-// Base dimensions in 48x48 sub-grid units (1 unit = 4px on Emery 200x228)
-// Level:                    0    1(8x12)  2(12x16) 3(16x20) 4(24x28) 5(32x40) 6(40x48)
-static const uint8_t LVL_W[7] = { 0,  2,       3,       4,       6,       8,       10 };
-static const uint8_t LVL_H[7] = { 0,  3,       4,       5,       7,      10,       12 };
-
+static const uint8_t LVL_W[7] = { 0,  2,  3,  4,  6,  8, 10 };
+static const uint8_t LVL_H[7] = { 0,  3,  4,  5,  7, 10, 12 };
 static const uint16_t LVL_STRIDE[7] = { 1, 733, 1229, 977, 1619, 1397, 1511 };
 
-static void canvas_update_proc(Layer *layer, GContext *ctx) {
+static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
     GRect bounds = layer_get_bounds(layer);
-
-    GColor bg_color = s_settings.invert_colors ? GColorWhite : GColorBlack;
-    GColor fg_color = s_settings.invert_colors ? GColorBlack : GColorWhite;
-
-    graphics_context_set_fill_color(ctx, bg_color);
-    graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-
     int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
-    int16_t dial_span = min_dim - 6; // 194px on Emery
-    int16_t origin_x = (bounds.size.w - dial_span) / 2;
-    int16_t origin_y = (bounds.size.h - dial_span) / 2;
+    int16_t span_x = geom->is_full_rect ? (bounds.size.w - 4) : (min_dim - 6);
+    int16_t span_y = geom->is_full_rect ? (bounds.size.h - 4) : (min_dim - 6);
+    int16_t origin_x = (bounds.size.w - span_x) / 2;
+    int16_t origin_y = (bounds.size.h - span_y) / 2;
 
-    DialGeometry geom;
-    geom.screen_w = bounds.size.w;
-    geom.screen_h = bounds.size.h;
-    geom.cx = bounds.size.w / 2;
-    geom.cy = bounds.size.h / 2;
-    geom.r_dial = (dial_span / 2) - 2;
-    geom.r_dial_sq = (int32_t)geom.r_dial * (int32_t)geom.r_dial;
-
-    int16_t r_rim_max = geom.r_dial + (dial_span / 22);
-    geom.r_rim_max_sq = (int32_t)r_rim_max * (int32_t)r_rim_max;
-
-    int16_t r_arbor = (dial_span * 48) / 1000; // ~9px on Emery
-    geom.r_arbor_sq = (int32_t)r_arbor * (int32_t)r_arbor;
-
-    int hour = s_current_time.tm_hour % 12;
-    int min = s_current_time.tm_min;
-    int minute_salt = s_current_time.tm_hour * 60 + min;
-
-    int32_t m_angle = (min * TRIG_MAX_ANGLE) / 60;
-    int32_t h_angle = ((hour * 60 + min) * TRIG_MAX_ANGLE) / 720;
-
-    // Hour hand: distinctly shorter (52% radius) & wider (22px corridor on Emery)
-    int16_t h_len  = (geom.r_dial * 52) / 100;
-    int16_t h_tail = (geom.r_dial * 9) / 100;
-    int16_t h_core = (dial_span * 56) / 1000; // ~11px half-width
-    geom.h_core_w_sq = (int32_t)h_core * (int32_t)h_core;
-
-    int32_t h_sin = sin_lookup(h_angle);
-    int32_t h_cos = cos_lookup(h_angle);
-    geom.h_x0 = geom.cx - (int16_t)((h_sin * h_tail) / TRIG_MAX_RATIO);
-    geom.h_y0 = geom.cy + (int16_t)((h_cos * h_tail) / TRIG_MAX_RATIO);
-    int16_t h_x1 = geom.cx + (int16_t)((h_sin * h_len) / TRIG_MAX_RATIO);
-    int16_t h_y1 = geom.cy - (int16_t)((h_cos * h_len) / TRIG_MAX_RATIO);
-    geom.h_dx = h_x1 - geom.h_x0;
-    geom.h_dy = h_y1 - geom.h_y0;
-    geom.h_len_sq = (int32_t)geom.h_dx * (int32_t)geom.h_dx +
-                    (int32_t)geom.h_dy * (int32_t)geom.h_dy;
-
-    // Minute hand: slices all the way through the outer rim (~104% radius, 15px corridor)
-    int16_t m_len  = geom.r_dial + (dial_span / 24);
-    int16_t m_tail = (geom.r_dial * 10) / 100;
-    int16_t m_core = (dial_span * 39) / 1000; // ~7.5px half-width
-    geom.m_core_w_sq = (int32_t)m_core * (int32_t)m_core;
-
-    int32_t m_sin = sin_lookup(m_angle);
-    int32_t m_cos = cos_lookup(m_angle);
-    geom.m_x0 = geom.cx - (int16_t)((m_sin * m_tail) / TRIG_MAX_RATIO);
-    geom.m_y0 = geom.cy + (int16_t)((m_cos * m_tail) / TRIG_MAX_RATIO);
-    int16_t m_x1 = geom.cx + (int16_t)((m_sin * m_len) / TRIG_MAX_RATIO);
-    int16_t m_y1 = geom.cy - (int16_t)((m_cos * m_len) / TRIG_MAX_RATIO);
-    geom.m_dx = m_x1 - geom.m_x0;
-    geom.m_dy = m_y1 - geom.m_y0;
-    geom.m_len_sq = (int32_t)geom.m_dx * (int32_t)geom.m_dx +
-                    (int32_t)geom.m_dy * (int32_t)geom.m_dy;
+    int minute_salt = s_current_time.tm_hour * 60 + s_current_time.tm_min;
 
     uint64_t occ[SUB_N];
-    for (int y = 0; y < SUB_N; y++) {
-        occ[y] = 0ULL;
-    }
+    for (int y = 0; y < SUB_N; y++) occ[y] = 0ULL;
 
-    graphics_context_set_fill_color(ctx, fg_color);
-
-    // ------------------------------------------------------------------------
-    // OPTIONAL DAY / DATE WORD (e.g. "SAT-31") PLACED IN BEST UNOBSTRUCTED BAND
-    // ------------------------------------------------------------------------
+    // 1. Optional Day / Date Word
     if (s_settings.show_date) {
         char date_word[10];
         int wday = (s_current_time.tm_wday >= 0 && s_current_time.tm_wday < 7)
@@ -613,13 +855,11 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
             for (int i = 0; i < word_len; i++) {
                 int g_idx = find_glyph_index(date_word[i]);
                 int gx = start_gx + i * dw;
-                int16_t bx = origin_x + (gx * dial_span) / SUB_N;
-                int16_t bw = origin_x + ((gx + dw) * dial_span) / SUB_N - bx;
-                int16_t by = origin_y + (gy_try * dial_span) / SUB_N;
-                int16_t bh = origin_y + ((gy_try + dh) * dial_span) / SUB_N - by;
-                if (glyph_fits_cleanly(&geom, g_idx, bx, by, bw, bh)) {
-                    fits++;
-                }
+                int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                int16_t by = origin_y + (gy_try * span_y) / SUB_N;
+                int16_t bh = origin_y + ((gy_try + dh) * span_y) / SUB_N - by;
+                if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) fits++;
             }
             if (fits > best_fit) {
                 best_fit = fits;
@@ -634,25 +874,20 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
             int gy_jitter = (s_settings.imperfection >= 25)
                             ? ((int)(fast_hash(i, minute_salt, 7) % 3) - 1) : 0;
             int gy = best_gy + gy_jitter;
+            int16_t bx = origin_x + (gx * span_x) / SUB_N;
+            int16_t by = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
 
-            int16_t bx = origin_x + (gx * dial_span) / SUB_N;
-            int16_t by = origin_y + (gy * dial_span) / SUB_N;
-            int16_t bw = origin_x + ((gx + dw) * dial_span) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + dh) * dial_span) / SUB_N - by;
-
-            if (subgrid_is_free(occ, gx, gy, dw, dh) &&
-                glyph_fits_cleanly(&geom, g_idx, bx, by, bw, bh)) {
-                draw_glyph(ctx, g_idx, bx, by, bw, bh);
+            if (subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) &&
+                glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
+                draw_glyph(ctx, g_idx, bx, by, bw, bh, true, fg_color);
                 subgrid_occupy(occ, gx, gy, dw, dh);
             }
         }
     }
 
-    // ------------------------------------------------------------------------
-    // PASS 1: IRREGULAR MULTI-SCALE PACKING (MAX_CHAR_SIZE DOWN TO MIN_CHAR_SIZE)
-    // Large tiers (lvl >= 4) use dense full-quadrant characters so hands aren't
-    // distorted by giant half-empty letters; lvl <= 3 contours hands & edges.
-    // ------------------------------------------------------------------------
+    // 2. Scattered Multi-Scale Pass (max_lvl down to min_lvl)
     int min_lvl = s_settings.min_char_size;
     int max_lvl = s_settings.max_char_size;
     int max_px_jitter = (s_settings.imperfection >= 40) ? 2 :
@@ -686,17 +921,13 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
                 else if ((h & 0x7) == 1) gh++;
             }
 
-            if (!subgrid_is_free(occ, gx, gy, gw, gh)) {
-                continue;
-            }
-            if (lvl > min_lvl && (int)((h >> 4) % 100) >= accept_pct) {
-                continue;
-            }
+            if (!subgrid_is_free(occ, SUB_N, gx, gy, gw, gh)) continue;
+            if (lvl > min_lvl && (int)((h >> 4) % 100) >= accept_pct) continue;
 
-            int16_t bx = origin_x + (gx * dial_span) / SUB_N;
-            int16_t by = origin_y + (gy * dial_span) / SUB_N;
-            int16_t bw = origin_x + ((gx + gw) * dial_span) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + gh) * dial_span) / SUB_N - by;
+            int16_t bx = origin_x + (gx * span_x) / SUB_N;
+            int16_t by = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw = origin_x + ((gx + gw) * span_x) / SUB_N - bx;
+            int16_t bh = origin_y + ((gy + gh) * span_y) / SUB_N - by;
 
             if (max_px_jitter > 0) {
                 bx += (int16_t)((int)((h >> 11) % (2 * max_px_jitter + 1)) - max_px_jitter);
@@ -704,30 +935,18 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
             }
 
             uint8_t q[4];
-            int total_cov = sample_rect_quadrants(&geom, bx, by, bw, bh, q);
-            if (total_cov == 0) {
-                continue;
-            }
+            int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
+            if (total_cov == 0) continue;
 
-            // Giant/Large tiers (lvl >= 4) require solid interior foreground (total_cov >= 45)
-            // so huge half-empty glyphs don't create false black blobs next to the hands.
             int min_cov = (lvl >= 4) ? 45 : ((lvl == 3) ? 21 : 12);
-            if (total_cov < min_cov) {
-                continue;
-            }
+            if (total_cov < min_cov) continue;
 
-            // Imperfection on outer rim crevices (keep hand borders fuller for readability)
-            if (lvl == min_lvl && total_cov < 30) {
-                int16_t mid_x = bx + bw / 2 - geom.cx;
-                int16_t mid_y = by + bh / 2 - geom.cy;
-                bool near_outer_rim = (mid_x * mid_x + mid_y * mid_y) > ((geom.r_dial_sq * 7) / 10);
-                if (near_outer_rim) {
-                    int skip_chance = (total_cov <= 18) ? (int)s_settings.imperfection
-                                                        : ((int)s_settings.imperfection / 2);
-                    if ((int)((h >> 19) % 100) < skip_chance) {
-                        continue;
-                    }
-                }
+            int16_t mid_x = bx + bw / 2;
+            int16_t mid_y = by + bh / 2;
+            if (!geom->is_full_rect && lvl == min_lvl && total_cov < 27 && !is_near_hands(geom, mid_x, mid_y)) {
+                int skip_chance = (total_cov <= 18) ? (int)s_settings.imperfection
+                                                    : ((int)s_settings.imperfection / 2);
+                if ((int)((h >> 19) % 100) < skip_chance) continue;
             }
 
             bool allow_punct = ((int)((h >> 8) % 100) < (int)s_settings.punct_ratio);
@@ -735,34 +954,24 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
 
             int g_idx = -1;
             if (total_cov >= 45) {
-                int cand;
-                if (allow_punct && s_num_dense_punct > 0) {
-                    cand = s_dense_punct[(h >> 12) % s_num_dense_punct];
-                } else {
-                    cand = s_dense_alnum[(h >> 12) % s_num_dense_alnum];
-                }
-                if (glyph_fits_cleanly(&geom, cand, bx, by, bw, bh)) {
+                int cand = (allow_punct && s_num_dense_punct > 0)
+                           ? s_dense_punct[(h >> 12) % s_num_dense_punct]
+                           : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
+                if (glyph_fits_cleanly(geom, cand, bx, by, bw, bh)) {
                     g_idx = cand;
                 }
             } else {
-                g_idx = match_contour_glyph(&geom, q, total_cov,
-                                            bx, by, bw, bh,
-                                            allow_punct, allow_micro, h);
+                g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, allow_punct, allow_micro, h);
             }
 
             if (g_idx >= 0) {
-                draw_glyph(ctx, g_idx, bx, by, bw, bh);
+                draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
                 subgrid_occupy(occ, gx, gy, gw, gh);
             }
         }
     }
 
-    // ------------------------------------------------------------------------
-    // PASS 2: INTERIOR-ONLY ALPHANUMERIC GAP SEALER (When min_lvl >= 2)
-    // Fills narrow 8x12 gaps between giant letters INSIDE the white disc with
-    // small letters/digits (NO punctuation!) so random interior holes never
-    // compete visually with the negative-space clock hands.
-    // ------------------------------------------------------------------------
+    // 3. Interior & Hand-Flank Alphanumeric Gap Sealer (keeps hands crisp when min_lvl >= 2)
     if (min_lvl >= 2) {
         int gw = 2, gh = 3;
         int idx = (int)(fast_hash(99, minute_salt, 71) % SUB_CELLS);
@@ -771,33 +980,28 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
             int gy = idx / SUB_N;
             idx = (idx + 733) % SUB_CELLS;
 
-            if (!subgrid_is_free(occ, gx, gy, gw, gh)) {
-                continue;
-            }
-            int16_t bx = origin_x + (gx * dial_span) / SUB_N;
-            int16_t by = origin_y + (gy * dial_span) / SUB_N;
-            int16_t bw = origin_x + ((gx + gw) * dial_span) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + gh) * dial_span) / SUB_N - by;
+            if (!subgrid_is_free(occ, SUB_N, gx, gy, gw, gh)) continue;
+
+            int16_t bx = origin_x + (gx * span_x) / SUB_N;
+            int16_t by = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw = origin_x + ((gx + gw) * span_x) / SUB_N - bx;
+            int16_t bh = origin_y + ((gy + gh) * span_y) / SUB_N - by;
 
             uint8_t q[4];
-            int total_cov = sample_rect_quadrants(&geom, bx, by, bw, bh, q);
-            // Strictly interior or direct hand-flank gaps (not outer rim noise)
-            int16_t mid_x = bx + bw / 2 - geom.cx;
-            int16_t mid_y = by + bh / 2 - geom.cy;
-            bool inside_inner_disc = (mid_x * mid_x + mid_y * mid_y) < ((geom.r_dial_sq * 72) / 100);
+            int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
+            bool near_hand = is_near_hands(geom, bx + bw / 2, by + bh / 2);
 
-            if (total_cov >= 45 || (inside_inner_disc && total_cov >= 24)) {
+            if (total_cov >= 45 || (near_hand && total_cov >= 15)) {
                 uint32_t h = fast_hash(gx, gy, minute_salt + 313);
                 int g_idx;
                 if (total_cov >= 45) {
                     int cand = s_dense_alnum[(h >> 5) % s_num_dense_alnum];
-                    g_idx = glyph_fits_cleanly(&geom, cand, bx, by, bw, bh) ? cand : -1;
+                    g_idx = glyph_fits_cleanly(geom, cand, bx, by, bw, bh) ? cand : -1;
                 } else {
-                    // Pure alphanumeric contour right beside the hand
-                    g_idx = match_contour_glyph(&geom, q, total_cov, bx, by, bw, bh, false, false, h);
+                    g_idx = match_contour_glyph(geom, q, total_cov, bx, by, bw, bh, false, false, h);
                 }
                 if (g_idx >= 0) {
-                    draw_glyph(ctx, g_idx, bx, by, bw, bh);
+                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
                     subgrid_occupy(occ, gx, gy, gw, gh);
                 }
             }
@@ -806,7 +1010,96 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
 }
 
 // ============================================================================
-// WINDOW, TIME TICK & APP LIFECYCLE
+// MAIN CANVAS UPDATE PROCEDURE
+// ============================================================================
+
+static void canvas_update_proc(Layer *layer, GContext *ctx) {
+    GRect bounds = layer_get_bounds(layer);
+
+    GColor bg_color = s_settings.invert_colors ? GColorWhite : GColorBlack;
+    GColor fg_color = s_settings.invert_colors ? GColorBlack : GColorWhite;
+
+    graphics_context_set_fill_color(ctx, bg_color);
+    graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+    int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
+    int16_t dial_span = min_dim - 6;
+
+    DialGeometry geom;
+    geom.screen_w = bounds.size.w;
+    geom.screen_h = bounds.size.h;
+    geom.cx = bounds.size.w / 2;
+    geom.cy = bounds.size.h / 2;
+    geom.is_full_rect = (s_settings.fill_mode == 1);
+    geom.r_dial = (dial_span / 2) - 2;
+    geom.r_dial_sq = (int32_t)geom.r_dial * (int32_t)geom.r_dial;
+
+    int16_t r_rim_max = geom.r_dial + (dial_span / 22);
+    geom.r_rim_max_sq = (int32_t)r_rim_max * (int32_t)r_rim_max;
+
+    int16_t r_arbor = (dial_span * 48) / 1000;
+    geom.r_arbor_sq = (int32_t)r_arbor * (int32_t)r_arbor;
+
+    int hour = s_current_time.tm_hour % 12;
+    int min = s_current_time.tm_min;
+
+    int32_t m_angle = (min * TRIG_MAX_ANGLE) / 60;
+    int32_t h_angle = ((hour * 60 + min) * TRIG_MAX_ANGLE) / 720;
+
+    int16_t h_len, m_len;
+    if (geom.is_full_rect) {
+        int16_t h_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, h_angle);
+        int16_t m_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, m_angle);
+        h_len = (h_edge * 54) / 100;
+        m_len = (m_edge * 94) / 100;
+    } else {
+        h_len = (geom.r_dial * 52) / 100;
+        m_len = geom.r_dial + (dial_span / 24);
+    }
+
+    int16_t h_tail = (geom.r_dial * 9) / 100;
+    int16_t h_core = (dial_span * 54) / 1000; // ~10.5px half-width (21px channel on Emery)
+    int16_t h_near = h_core + (dial_span / 16);
+    geom.h_core_w_sq = (int32_t)h_core * (int32_t)h_core;
+    geom.h_near_w_sq = (int32_t)h_near * (int32_t)h_near;
+
+    int32_t h_sin = sin_lookup(h_angle);
+    int32_t h_cos = cos_lookup(h_angle);
+    geom.h_x0 = geom.cx - (int16_t)((h_sin * h_tail) / TRIG_MAX_RATIO);
+    geom.h_y0 = geom.cy + (int16_t)((h_cos * h_tail) / TRIG_MAX_RATIO);
+    int16_t h_x1 = geom.cx + (int16_t)((h_sin * h_len) / TRIG_MAX_RATIO);
+    int16_t h_y1 = geom.cy - (int16_t)((h_cos * h_len) / TRIG_MAX_RATIO);
+    geom.h_dx = h_x1 - geom.h_x0;
+    geom.h_dy = h_y1 - geom.h_y0;
+    geom.h_len_sq = (int32_t)geom.h_dx * (int32_t)geom.h_dx +
+                    (int32_t)geom.h_dy * (int32_t)geom.h_dy;
+
+    int16_t m_tail = (geom.r_dial * 10) / 100;
+    int16_t m_core = (dial_span * 38) / 1000; // ~7.5px half-width (15px channel on Emery)
+    int16_t m_near = m_core + (dial_span / 16);
+    geom.m_core_w_sq = (int32_t)m_core * (int32_t)m_core;
+    geom.m_near_w_sq = (int32_t)m_near * (int32_t)m_near;
+
+    int32_t m_sin = sin_lookup(m_angle);
+    int32_t m_cos = cos_lookup(m_angle);
+    geom.m_x0 = geom.cx - (int16_t)((m_sin * m_tail) / TRIG_MAX_RATIO);
+    geom.m_y0 = geom.cy + (int16_t)((m_cos * m_tail) / TRIG_MAX_RATIO);
+    int16_t m_x1 = geom.cx + (int16_t)((m_sin * m_len) / TRIG_MAX_RATIO);
+    int16_t m_y1 = geom.cy - (int16_t)((m_cos * m_len) / TRIG_MAX_RATIO);
+    geom.m_dx = m_x1 - geom.m_x0;
+    geom.m_dy = m_y1 - geom.m_y0;
+    geom.m_len_sq = (int32_t)geom.m_dx * (int32_t)geom.m_dx +
+                    (int32_t)geom.m_dy * (int32_t)geom.m_dy;
+
+    if (s_settings.layout_style == 0) {
+        render_semi_grid(layer, ctx, &geom, fg_color);
+    } else {
+        render_organic_collage(layer, ctx, &geom, fg_color);
+    }
+}
+
+// ============================================================================
+// WINDOW & LIFECYCLE HANDLERS
 // ============================================================================
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
