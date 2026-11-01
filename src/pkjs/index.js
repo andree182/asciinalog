@@ -12,7 +12,8 @@ var DEFAULTS = {
   INVERT_COLORS: 0,
   FILL_MODE: 0,          // 0 = Circular Dial, 1 = Full Screen Rectangle
   LAYOUT_STYLE: 0,       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
-  GREY_COMPLICATIONS: 1  // 0 = Off (solid), 1 = On (dithered on B&W, light grey on color)
+  GREY_COMPLICATIONS: 1, // 0 = Off (solid), 1 = On (dithered on B&W, light grey on color)
+  RANDOM_COLORS: 0       // 0 = Off (white/fg), 1 = On (random light colors on color watches)
 };
 
 function loadSettings() {
@@ -105,6 +106,10 @@ function buildConfigHtml(s) {
     '<input type="checkbox" id="grey_comp"' + (s.GREY_COMPLICATIONS ? ' checked' : '') + '></div>',
     '<div class="hint">Renders complications in greyscale (50% stipple on B&W, light grey on color)</div></div>',
 
+    '<div class="card"><div class="row"><label>Random Light Colors (Color watches)</label>',
+    '<input type="checkbox" id="random_colors"' + (s.RANDOM_COLORS ? ' checked' : '') + '></div>',
+    '<div class="hint">Draws background characters in random light colors while complications stay white or grey</div></div>',
+
     '<div class="card"><div class="row"><label>Invert Colors (Black on White)</label>',
     '<input type="checkbox" id="invert"' + (s.INVERT_COLORS ? ' checked' : '') + '></div></div>',
 
@@ -141,6 +146,7 @@ function buildConfigHtml(s) {
     '    IMPERFECTION:parseInt(el("imp").value,10),',
     '    SHOW_DATE:el("show_date").checked?1:0,',
     '    GREY_COMPLICATIONS:el("grey_comp").checked?1:0,',
+    '    RANDOM_COLORS:el("random_colors").checked?1:0,',
     '    INVERT_COLORS:el("invert").checked?1:0',
     '  };',
     '  location.href=getReturnTo()+encodeURIComponent(JSON.stringify(data));',

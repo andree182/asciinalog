@@ -21,7 +21,8 @@
             "INVERT_COLORS",
             "FILL_MODE",
             "LAYOUT_STYLE",
-            "GREY_COMPLICATIONS"
+            "GREY_COMPLICATIONS",
+            "RANDOM_COLORS"
         ],
         "projectType": "native",
         "resources": {

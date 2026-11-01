@@ -11,7 +11,7 @@
 #define SUB_N 48
 #define SUB_CELLS (SUB_N * SUB_N)
 #define MAX_GRID_ROWS 36
-#define SETTINGS_PERSIST_KEY 102
+#define SETTINGS_PERSIST_KEY 103
 
 typedef struct {
     uint8_t min_char_size;      // 1..4 (default 2)
@@ -24,6 +24,7 @@ typedef struct {
     uint8_t fill_mode;          // 0 = Circular Dial, 1 = Full Screen Rectangle
     uint8_t layout_style;       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
     uint8_t grey_complications; // 0 = Solid Foreground, 1 = Greyscale / Dithered
+    uint8_t random_colors;      // 0 = Off, 1 = Random Light Colors (Color watches)
 } WatchSettings;
 
 static WatchSettings s_settings;
@@ -206,6 +207,7 @@ static void set_default_settings(void) {
     s_settings.fill_mode          = 0; // 0 = Circular Dial, 1 = Full Screen Rectangle
     s_settings.layout_style       = 0; // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
     s_settings.grey_complications = 1; // 1 = Dithered on B&W / LightGrey on Color
+    s_settings.random_colors      = 1; // 1 = Random Light Colors on Color Watches
 }
 
 static void clamp_settings(void) {
@@ -222,6 +224,7 @@ static void clamp_settings(void) {
     if (s_settings.fill_mode > 1) s_settings.fill_mode = 1;
     if (s_settings.layout_style > 1) s_settings.layout_style = 1;
     if (s_settings.grey_complications > 1) s_settings.grey_complications = 1;
+    if (s_settings.random_colors > 1) s_settings.random_colors = 1;
 #if defined(PBL_ROUND)
     s_settings.fill_mode = 0;
 #endif
@@ -267,6 +270,7 @@ static void inbox_received_callback(DictionaryIterator *iter, void *context) {
     if ((t = dict_find(iter, MESSAGE_KEY_FILL_MODE)))          s_settings.fill_mode          = (uint8_t)(tuple_to_int(t) ? 1 : 0);
     if ((t = dict_find(iter, MESSAGE_KEY_LAYOUT_STYLE)))       s_settings.layout_style       = (uint8_t)(tuple_to_int(t) ? 1 : 0);
     if ((t = dict_find(iter, MESSAGE_KEY_GREY_COMPLICATIONS))) s_settings.grey_complications = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_RANDOM_COLORS)))      s_settings.random_colors      = (uint8_t)(tuple_to_int(t) ? 1 : 0);
 
     save_settings();
     if (s_canvas_layer) {
@@ -527,6 +531,60 @@ static int match_contour_glyph(const DialGeometry *geom,
     return best_idx;
 }
 
+#if defined(PBL_COLOR)
+static const GColor s_light_garbage_colors[] = {
+    GColorPastelYellow,
+    GColorIcterine,
+    GColorMintGreen,
+    GColorCeleste,
+    GColorBabyBlueEyes,
+    GColorRichBrilliantLavender,
+    GColorMelon,
+    GColorRajah,
+    GColorInchworm,
+    GColorSpringBud,
+    GColorShockingPink,
+    GColorBrilliantRose,
+    GColorElectricBlue,
+    GColorMediumAquamarine,
+    GColorTiffanyBlue,
+    GColorVeryLightBlue
+};
+#define NUM_LIGHT_GARBAGE_COLORS ((int)(sizeof(s_light_garbage_colors) / sizeof(s_light_garbage_colors[0])))
+
+static const GColor s_dark_garbage_colors[] = {
+    GColorBlack,
+    GColorOxfordBlue,
+    GColorDukeBlue,
+    GColorDarkGreen,
+    GColorMidnightGreen,
+    GColorCobaltBlue,
+    GColorImperialPurple,
+    GColorBulgarianRose,
+    GColorDarkCandyAppleRed,
+    GColorWindsorTan,
+    GColorArmyGreen,
+    GColorIndigo
+};
+#define NUM_DARK_GARBAGE_COLORS ((int)(sizeof(s_dark_garbage_colors) / sizeof(s_dark_garbage_colors[0])))
+
+static GColor get_garbage_color(uint32_t seed, GColor default_fg) {
+    if (!s_settings.random_colors) {
+        return default_fg;
+    }
+    if (s_settings.invert_colors) {
+        return s_dark_garbage_colors[(seed >> 3) % NUM_DARK_GARBAGE_COLORS];
+    } else {
+        return s_light_garbage_colors[(seed >> 3) % NUM_LIGHT_GARBAGE_COLORS];
+    }
+}
+#else
+static inline GColor get_garbage_color(uint32_t seed, GColor default_fg) {
+    (void)seed;
+    return default_fg;
+}
+#endif
+
 static void draw_glyph(GContext *ctx, int glyph_idx,
                        int16_t x0, int16_t y0, int16_t box_w, int16_t box_h,
                        bool is_complication, GColor fg_color) {
@@ -535,8 +593,13 @@ static void draw_glyph(GContext *ctx, int glyph_idx,
 
     bool dither = false;
 #if defined(PBL_COLOR)
-    if (is_complication && s_settings.grey_complications) {
-        GColor c = s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
+    if (is_complication) {
+        GColor c;
+        if (s_settings.grey_complications) {
+            c = s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
+        } else {
+            c = s_settings.invert_colors ? GColorBlack : GColorWhite;
+        }
         graphics_context_set_fill_color(ctx, c);
         graphics_context_set_stroke_color(ctx, c);
     } else {
@@ -846,7 +909,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                             : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
 
                 if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
-                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
+                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
                     grid_rect_occupy(occ, gx, gy, bs, bs);
                 }
             }
@@ -905,7 +968,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
             }
 
             if (g_idx >= 0) {
-                draw_glyph(ctx, g_idx, bx, by, cell_w, cell_h, false, fg_color);
+                draw_glyph(ctx, g_idx, bx, by, cell_w, cell_h, false, get_garbage_color(h, fg_color));
                 grid_rect_occupy(occ, gx, gy, 1, 1);
             }
         }
@@ -1153,7 +1216,7 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
             }
 
             if (g_idx >= 0) {
-                draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
+                draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
                 subgrid_occupy(occ, gx, gy, gw, gh);
             }
         }
@@ -1192,7 +1255,7 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
                     }
                 }
                 if (g_idx >= 0) {
-                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, fg_color);
+                    draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
                     subgrid_occupy(occ, gx, gy, gw, gh);
                 }
             }
