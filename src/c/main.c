@@ -11,7 +11,7 @@
 #define SUB_N 48
 #define SUB_CELLS (SUB_N * SUB_N)
 #define MAX_GRID_ROWS 36
-#define SETTINGS_PERSIST_KEY 103
+#define SETTINGS_PERSIST_KEY 106
 
 typedef struct {
     uint8_t min_char_size;      // 1..4 (default 2)
@@ -20,10 +20,14 @@ typedef struct {
     uint8_t punct_ratio;        // 0..50 (default 12)
     uint8_t imperfection;       // 0..100 (default 30)
     uint8_t show_date;          // 0 or 1 (default 1)
+    uint8_t show_month;         // 0 or 1 (default 1)
+    uint8_t show_battery;       // 0 or 1 (default 1)
+    uint8_t show_hand_hour;     // 0 or 1 (default 1)
+    uint8_t show_hand_minute;   // 0 or 1 (default 1)
     uint8_t invert_colors;      // 0 or 1 (default 0)
     uint8_t fill_mode;          // 0 = Circular Dial, 1 = Full Screen Rectangle
     uint8_t layout_style;       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
-    uint8_t grey_complications; // 0 = Solid Foreground, 1 = Greyscale / Dithered
+    uint8_t contrast_mode;      // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform
     uint8_t random_colors;      // 0 = Off, 1 = Random Light Colors (Color watches)
 } WatchSettings;
 
@@ -199,15 +203,23 @@ static int find_glyph_index(char ch) {
 static void set_default_settings(void) {
     s_settings.min_char_size      = 2;
     s_settings.max_char_size      = 5;
-    s_settings.big_char_bias      = 72;
+    s_settings.big_char_bias      = 20; // Default 20%
     s_settings.punct_ratio        = 12;
     s_settings.imperfection       = 30;
-    s_settings.show_date          = 1;
-    s_settings.invert_colors      = 0;
-    s_settings.fill_mode          = 0; // 0 = Circular Dial, 1 = Full Screen Rectangle
-    s_settings.layout_style       = 0; // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
-    s_settings.grey_complications = 1; // 1 = Dithered on B&W / LightGrey on Color
-    s_settings.random_colors      = 1; // 1 = Random Light Colors on Color Watches
+    s_settings.show_date          = 1;  // Day/Word ON
+    s_settings.show_month         = 1;  // Month ON
+    s_settings.show_battery       = 1;  // Battery ON
+    s_settings.show_hand_hour     = 0;  // Hour OFF
+    s_settings.show_hand_minute   = 0;  // Min OFF
+    s_settings.invert_colors      = 0;  // Invert OFF
+#if defined(PBL_ROUND)
+    s_settings.fill_mode          = 0;  // Circular Dial on round watches
+#else
+    s_settings.fill_mode          = 1;  // Full Screen Rectangle on rectangle watches
+#endif
+    s_settings.layout_style       = 0;  // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+    s_settings.contrast_mode      = 0;  // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform
+    s_settings.random_colors      = 0;  // Pastel colors OFF
 }
 
 static void clamp_settings(void) {
@@ -221,9 +233,14 @@ static void clamp_settings(void) {
     if (s_settings.big_char_bias > 100) s_settings.big_char_bias = 100;
     if (s_settings.punct_ratio > 50) s_settings.punct_ratio = 50;
     if (s_settings.imperfection > 100) s_settings.imperfection = 100;
+    if (s_settings.show_date > 1) s_settings.show_date = 1;
+    if (s_settings.show_month > 1) s_settings.show_month = 1;
+    if (s_settings.show_battery > 1) s_settings.show_battery = 1;
+    if (s_settings.show_hand_hour > 1) s_settings.show_hand_hour = 1;
+    if (s_settings.show_hand_minute > 1) s_settings.show_hand_minute = 1;
     if (s_settings.fill_mode > 1) s_settings.fill_mode = 1;
     if (s_settings.layout_style > 1) s_settings.layout_style = 1;
-    if (s_settings.grey_complications > 1) s_settings.grey_complications = 1;
+    if (s_settings.contrast_mode > 2) s_settings.contrast_mode = 2;
     if (s_settings.random_colors > 1) s_settings.random_colors = 1;
 #if defined(PBL_ROUND)
     s_settings.fill_mode = 0;
@@ -266,10 +283,14 @@ static void inbox_received_callback(DictionaryIterator *iter, void *context) {
     if ((t = dict_find(iter, MESSAGE_KEY_PUNCT_RATIO)))        s_settings.punct_ratio        = (uint8_t)tuple_to_int(t);
     if ((t = dict_find(iter, MESSAGE_KEY_IMPERFECTION)))       s_settings.imperfection       = (uint8_t)tuple_to_int(t);
     if ((t = dict_find(iter, MESSAGE_KEY_SHOW_DATE)))          s_settings.show_date          = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_MONTH)))         s_settings.show_month         = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_BATTERY)))       s_settings.show_battery       = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_HAND_HOUR)))     s_settings.show_hand_hour     = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_SHOW_HAND_MINUTE)))   s_settings.show_hand_minute   = (uint8_t)(tuple_to_int(t) ? 1 : 0);
     if ((t = dict_find(iter, MESSAGE_KEY_INVERT_COLORS)))      s_settings.invert_colors      = (uint8_t)(tuple_to_int(t) ? 1 : 0);
     if ((t = dict_find(iter, MESSAGE_KEY_FILL_MODE)))          s_settings.fill_mode          = (uint8_t)(tuple_to_int(t) ? 1 : 0);
     if ((t = dict_find(iter, MESSAGE_KEY_LAYOUT_STYLE)))       s_settings.layout_style       = (uint8_t)(tuple_to_int(t) ? 1 : 0);
-    if ((t = dict_find(iter, MESSAGE_KEY_GREY_COMPLICATIONS))) s_settings.grey_complications = (uint8_t)(tuple_to_int(t) ? 1 : 0);
+    if ((t = dict_find(iter, MESSAGE_KEY_CONTRAST_MODE)))      s_settings.contrast_mode      = (uint8_t)tuple_to_int(t);
     if ((t = dict_find(iter, MESSAGE_KEY_RANDOM_COLORS)))      s_settings.random_colors      = (uint8_t)(tuple_to_int(t) ? 1 : 0);
 
     save_settings();
@@ -293,12 +314,14 @@ typedef struct {
 
     // Hour hand capsule
     int16_t h_x0, h_y0, h_dx, h_dy;
+    int16_t h_len;
     int32_t h_len_sq;
     int32_t h_core_w_sq;
     int32_t h_near_w_sq;
 
     // Minute hand capsule
     int16_t m_x0, m_y0, m_dx, m_dy;
+    int16_t m_len;
     int32_t m_len_sq;
     int32_t m_core_w_sq;
     int32_t m_near_w_sq;
@@ -645,14 +668,17 @@ static const GColor s_dark_garbage_colors[] = {
 #define NUM_DARK_GARBAGE_COLORS ((int)(sizeof(s_dark_garbage_colors) / sizeof(s_dark_garbage_colors[0])))
 
 static GColor get_garbage_color(uint32_t seed, GColor default_fg) {
-    if (!s_settings.random_colors) {
-        return default_fg;
+    if (s_settings.random_colors) {
+        if (s_settings.invert_colors) {
+            return s_dark_garbage_colors[(seed >> 3) % NUM_DARK_GARBAGE_COLORS];
+        } else {
+            return s_light_garbage_colors[(seed >> 3) % NUM_LIGHT_GARBAGE_COLORS];
+        }
     }
-    if (s_settings.invert_colors) {
-        return s_dark_garbage_colors[(seed >> 3) % NUM_DARK_GARBAGE_COLORS];
-    } else {
-        return s_light_garbage_colors[(seed >> 3) % NUM_LIGHT_GARBAGE_COLORS];
+    if (s_settings.contrast_mode == 0) {
+        return s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
     }
+    return default_fg;
 }
 #else
 static inline GColor get_garbage_color(uint32_t seed, GColor default_fg) {
@@ -661,17 +687,15 @@ static inline GColor get_garbage_color(uint32_t seed, GColor default_fg) {
 }
 #endif
 
-static void draw_glyph(GContext *ctx, int glyph_idx,
-                       int16_t x0, int16_t y0, int16_t box_w, int16_t box_h,
-                       bool is_complication, GColor fg_color) {
-    if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
-    const uint8_t *rows = s_glyphs[glyph_idx].rows;
-
+static void draw_glyph_rows(GContext *ctx, const uint8_t rows[8],
+                            int16_t x0, int16_t y0, int16_t box_w, int16_t box_h,
+                            bool is_complication, GColor fg_color) {
+    if (!rows) return;
     bool dither = false;
 #if defined(PBL_COLOR)
     if (is_complication) {
         GColor c;
-        if (s_settings.grey_complications) {
+        if (s_settings.contrast_mode == 1) {
             c = s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
         } else {
             c = s_settings.invert_colors ? GColorBlack : GColorWhite;
@@ -683,8 +707,14 @@ static void draw_glyph(GContext *ctx, int glyph_idx,
         graphics_context_set_stroke_color(ctx, fg_color);
     }
 #else
-    if (is_complication && s_settings.grey_complications) {
-        dither = true;
+    if (is_complication) {
+        if (s_settings.contrast_mode == 1) {
+            dither = true;
+        }
+    } else {
+        if (s_settings.contrast_mode == 0) {
+            dither = true;
+        }
     }
     graphics_context_set_fill_color(ctx, fg_color);
     graphics_context_set_stroke_color(ctx, fg_color);
@@ -736,8 +766,53 @@ static void draw_glyph(GContext *ctx, int glyph_idx,
     }
 }
 
+static void draw_glyph(GContext *ctx, int glyph_idx,
+                       int16_t x0, int16_t y0, int16_t box_w, int16_t box_h,
+                       bool is_complication, GColor fg_color) {
+    if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
+    draw_glyph_rows(ctx, s_glyphs[glyph_idx].rows, x0, y0, box_w, box_h, is_complication, fg_color);
+}
+
+static void get_battery_glyph_rows(uint8_t rows[8]) {
+    BatteryChargeState charge = battery_state_service_peek();
+    int pct = charge.charge_percent;
+    bool charging = charge.is_charging;
+
+    // Vertical filled rectangle battery:
+    // Row 0: terminal cap: 0x38 (..###...)
+    // Row 1: top border:   0xFE (.#######)
+    // Row 6: bottom border:0xFE (.#######)
+    // Rows 2..5: body interior (width 5, bits 1..5)
+    rows[0] = 0x38;
+    rows[1] = 0xFE;
+    rows[6] = 0xFE;
+    rows[7] = 0x00;
+
+    int filled_rows = (pct + 12) / 25; // 0..4
+    if (filled_rows > 4) filled_rows = 4;
+    if (filled_rows < 1 && pct > 0) filled_rows = 1;
+
+    for (int r = 2; r <= 5; r++) {
+        int dist_from_bottom = 5 - r;
+        if (dist_from_bottom < filled_rows) {
+            rows[r] = 0xFE; // Solid filled rectangle row
+        } else {
+            rows[r] = 0x82; // Hollow casing (.#.....#)
+        }
+    }
+    if (charging) {
+        rows[3] = 0xBA;
+        rows[4] = 0x92;
+    }
+}
+
 static const char * const s_day_names[7] = {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
+};
+
+static const char * const s_month_names[12] = {
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
 };
 
 // ============================================================================
@@ -970,25 +1045,128 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
         }
     }
 
-    // 2. Multi-Scale Hero & Medium Grid Blocks (5x5, 4x4, 3x3, 2x2 cells)
-    // Map settings max_char_size (3..6) -> block size in cells (2..5)
-    int max_bs = (int)s_settings.max_char_size - 1; // lvl 5 -> 4x4 (32x36px), lvl 6 -> 5x5 (40x45px)
-    if (max_bs < 2) max_bs = 2;
-    if (max_bs > 5) max_bs = 5;
-    int min_interior_bs = (s_settings.min_char_size >= 3) ? ((int)s_settings.min_char_size - 1) : 1;
+    // 1b. Month Complication (e.g. "NOV")
+    if (s_settings.show_month) {
+        int mon = (s_current_time.tm_mon >= 0 && s_current_time.tm_mon < 12)
+                  ? s_current_time.tm_mon : 0;
+        const char *month_str = s_month_names[mon];
+        bool placed_mon = false;
+        static const int m_py[8] = { 24, 70, 32, 60, 42, 50, 18, 76 };
+        static const int m_px[6] = { 4, 68, 18, 52, 32, 44 };
+        for (int py = 0; py < 8 && !placed_mon; py++) {
+            int gy = (rows * m_py[py]) / 100;
+            for (int px = 0; px < 6 && !placed_mon; px++) {
+                int gx = (cols * m_px[px]) / 100;
+                placed_mon = try_place_grid_word(ctx, geom, occ, cols, rows,
+                                                 origin_x, origin_y, cell_w, cell_h,
+                                                 month_str, 3, gx, gy, 2, 2, fg_color);
+            }
+        }
+    }
 
-    for (int bs = max_bs; bs >= 2; bs--) {
+    // 1c. Battery Complication (Single character filled rectangle)
+    if (s_settings.show_battery) {
+        uint8_t batt_rows[8];
+        get_battery_glyph_rows(batt_rows);
+        bool placed_batt = false;
+        int bw_cells = 2, bh_cells = 2;
+        static const int b_py[8] = { 18, 74, 28, 65, 38, 54, 14, 80 };
+        static const int b_px[8] = { 78, 14, 68, 24, 82, 10, 48, 38 };
+        for (int p = 0; p < 8 && !placed_batt; p++) {
+            int gy = (rows * b_py[p]) / 100;
+            int gx = (cols * b_px[p]) / 100;
+            if (gx >= 0 && gy >= 0 && (gx + bw_cells) <= cols && (gy + bh_cells) <= rows) {
+                if (grid_rect_free(occ, cols, rows, gx, gy, bw_cells, bh_cells)) {
+                    int16_t bx = origin_x + gx * cell_w;
+                    int16_t by = origin_y + gy * cell_h;
+                    int16_t bw = bw_cells * cell_w;
+                    int16_t bh = bh_cells * cell_h;
+                    if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 3)) {
+                        draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
+                        grid_rect_occupy(occ, gx, gy, bw_cells, bh_cells);
+                        placed_batt = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 1d. Hour Digits at Analog Hand Tip
+    if (s_settings.show_hand_hour) {
+        int h_val = clock_is_24h_style() ? s_current_time.tm_hour : (s_current_time.tm_hour % 12);
+        if (!clock_is_24h_style() && h_val == 0) h_val = 12;
+        char h_str[4];
+        snprintf(h_str, sizeof(h_str), "%d", h_val);
+        int h_len_chars = strlen(h_str);
+
+        int16_t tx = geom->cx + (geom->h_dx * 120) / 100;
+        int16_t ty = geom->cy + (geom->h_dy * 120) / 100;
+        int dw = 2, dh = 2;
+        int gx = (tx - origin_x) / cell_w - (h_len_chars * dw) / 2;
+        int gy = (ty - origin_y) / cell_h - dh / 2;
+        if (gx < 0) gx = 0;
+        if (gy < 0) gy = 0;
+        if (gx + h_len_chars * dw > cols) gx = cols - h_len_chars * dw;
+        if (gy + dh > rows) gy = rows - dh;
+
+        for (int i = 0; i < h_len_chars; i++) {
+            int cgx = gx + i * dw;
+            int16_t bx = origin_x + cgx * cell_w;
+            int16_t by = origin_y + gy * cell_h;
+            int16_t bw = dw * cell_w;
+            int16_t bh = dh * cell_h;
+            draw_glyph(ctx, find_glyph_index(h_str[i]), bx, by, bw, bh, true, fg_color);
+            grid_rect_occupy(occ, cgx, gy, dw, dh);
+        }
+    }
+
+    // 1e. Minute Digits at Analog Hand Tip
+    if (s_settings.show_hand_minute) {
+        char m_str[4];
+        snprintf(m_str, sizeof(m_str), "%02d", s_current_time.tm_min);
+        int m_len_chars = 2;
+
+        int16_t tx = geom->cx + (geom->m_dx * 84) / 100;
+        int16_t ty = geom->cy + (geom->m_dy * 84) / 100;
+        int dw = 2, dh = 2;
+        int gx = (tx - origin_x) / cell_w - (m_len_chars * dw) / 2;
+        int gy = (ty - origin_y) / cell_h - dh / 2;
+        if (gx < 0) gx = 0;
+        if (gy < 0) gy = 0;
+        if (gx + m_len_chars * dw > cols) gx = cols - m_len_chars * dw;
+        if (gy + dh > rows) gy = rows - dh;
+
+        for (int i = 0; i < m_len_chars; i++) {
+            int cgx = gx + i * dw;
+            int16_t bx = origin_x + cgx * cell_w;
+            int16_t by = origin_y + gy * cell_h;
+            int16_t bw = dw * cell_w;
+            int16_t bh = dh * cell_h;
+            draw_glyph(ctx, find_glyph_index(m_str[i]), bx, by, bw, bh, true, fg_color);
+            grid_rect_occupy(occ, cgx, gy, dw, dh);
+        }
+    }
+
+    // 2. Multi-Scale Hero & Medium Grid Blocks (5x5, 4x4, 3x3, 2x2 cells)
+    // Larger min_char_size strictly enforces larger character sizes across the face!
+    int min_bs = (int)s_settings.min_char_size; // 1..4
+    if (min_bs < 1) min_bs = 1;
+    if (min_bs > 4) min_bs = 4;
+    int max_bs = (int)s_settings.max_char_size - 1; // 3..6 -> 2..5
+    if (max_bs < min_bs) max_bs = min_bs;
+    if (max_bs > 5) max_bs = 5;
+
+    int loop_min_bs = (min_bs > 1) ? min_bs : 2;
+    for (int bs = max_bs; bs >= loop_min_bs; bs--) {
         int accept_pct;
-        if (bs <= min_interior_bs) {
-            accept_pct = 100;
-        } else if (bs >= 4) {
-            accept_pct = (s_settings.big_char_bias * 55) / 100; // ~40% at bias 72
+        if (bs >= 4) {
+            accept_pct = 35 + (s_settings.big_char_bias * 55) / 100;
         } else if (bs == 3) {
-            accept_pct = 15 + (s_settings.big_char_bias * 55) / 100; // ~55% at bias 72
+            accept_pct = 25 + (s_settings.big_char_bias * 50) / 100;
         } else {
-            accept_pct = (s_settings.min_char_size == 1)
-                         ? (20 + (s_settings.big_char_bias * 45) / 100)
-                         : (35 + (s_settings.big_char_bias * 55) / 100); // ~75% at default min=2, bias=72
+            accept_pct = (min_bs == 2)
+                         ? (25 + (s_settings.big_char_bias * 45) / 100)
+                         : (15 + (s_settings.big_char_bias * 30) / 100);
         }
 
         for (int gy = 0; gy <= rows - bs; gy++) {
@@ -1008,8 +1186,6 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
 
                 uint8_t q[4];
                 int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
-                // Strictly require full foreground (48) so multi-cell blocks never leave
-                // craters near the hands — obstructed blocks subdivide to smaller cells!
                 if (total_cov < 48) {
                     continue;
                 }
@@ -1027,7 +1203,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
         }
     }
 
-    // 3. 1x1 Base Cells: Seal All Interior Gaps + Crisp AAlib Hand/Rim Contouring
+    // 3. 1x1 Base Cells: Seal Hand Contours & Outer Rim
     for (int gy = 0; gy < rows; gy++) {
         for (int gx = 0; gx < cols; gx++) {
             if (!grid_rect_free(occ, cols, rows, gx, gy, 1, 1)) {
@@ -1046,6 +1222,11 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
             int16_t mid_x = bx + cell_w / 2;
             int16_t mid_y = by + cell_h / 2;
             bool near_hand = is_near_hands(geom, mid_x, mid_y);
+
+            // If user requested min character size > 1, do NOT fill open interior spaces with 1x1!
+            if (min_bs > 1 && total_cov >= 45 && !near_hand) {
+                continue;
+            }
 
             // On outer circle rim (away from hands!), skip minor slivers per imperfection
             if (!geom->is_full_rect && !near_hand && total_cov < 27) {
@@ -1253,9 +1434,108 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         }
     }
 
+    // 1b. Month Complication (e.g. "NOV")
+    if (s_settings.show_month) {
+        int mon = (s_current_time.tm_mon >= 0 && s_current_time.tm_mon < 12) ? s_current_time.tm_mon : 0;
+        const char *month_str = s_month_names[mon];
+        bool placed_mon = false;
+        static const int m_gy[6] = { 20, 28, 12, 33, 16, 25 };
+        static const int m_gx[6] = { 6, 26, 12, 22, 30, 4 };
+        for (int i = 0; i < 6 && !placed_mon; i++) {
+            placed_mon = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                span_x, span_y, month_str, 3,
+                                                m_gx[i], m_gy[i], 4, 6,
+                                                minute_salt, fg_color);
+        }
+    }
+
+    // 1c. Battery Complication (Single character filled rectangle)
+    if (s_settings.show_battery) {
+        uint8_t batt_rows[8];
+        get_battery_glyph_rows(batt_rows);
+        bool placed_batt = false;
+        static const int b_gy[6] = { 14, 32, 20, 26, 10, 35 };
+        static const int b_gx[6] = { 32, 8, 28, 14, 35, 10 };
+        int dw = 4, dh = 6;
+        for (int i = 0; i < 6 && !placed_batt; i++) {
+            int gx = b_gx[i], gy = b_gy[i];
+            if (subgrid_is_free(occ, SUB_N, gx, gy, dw, dh)) {
+                int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                int16_t by = origin_y + (gy * span_y) / SUB_N;
+                int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+                if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 3)) {
+                    draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
+                    subgrid_occupy(occ, gx, gy, dw, dh);
+                    placed_batt = true;
+                }
+            }
+        }
+    }
+
+    // 1d. Hour Digits at Analog Hand Tip
+    if (s_settings.show_hand_hour) {
+        int h_val = clock_is_24h_style() ? s_current_time.tm_hour : (s_current_time.tm_hour % 12);
+        if (!clock_is_24h_style() && h_val == 0) h_val = 12;
+        char h_str[4];
+        snprintf(h_str, sizeof(h_str), "%d", h_val);
+        int h_len_chars = strlen(h_str);
+
+        int16_t tx = geom->cx + (geom->h_dx * 120) / 100;
+        int16_t ty = geom->cy + (geom->h_dy * 120) / 100;
+        int dw = 3, dh = 5;
+        int gx = ((tx - origin_x) * SUB_N) / span_x - (h_len_chars * dw) / 2;
+        int gy = ((ty - origin_y) * SUB_N) / span_y - dh / 2;
+        if (gx < 0) gx = 0;
+        if (gy < 0) gy = 0;
+        if (gx + h_len_chars * dw > SUB_N) gx = SUB_N - h_len_chars * dw;
+        if (gy + dh > SUB_N) gy = SUB_N - dh;
+
+        for (int i = 0; i < h_len_chars; i++) {
+            int cgx = gx + i * dw;
+            int16_t bx = origin_x + (cgx * span_x) / SUB_N;
+            int16_t by = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw = origin_x + ((cgx + dw) * span_x) / SUB_N - bx;
+            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+            draw_glyph(ctx, find_glyph_index(h_str[i]), bx, by, bw, bh, true, fg_color);
+            subgrid_occupy(occ, cgx, gy, dw, dh);
+        }
+    }
+
+    // 1e. Minute Digits at Analog Hand Tip
+    if (s_settings.show_hand_minute) {
+        char m_str[4];
+        snprintf(m_str, sizeof(m_str), "%02d", s_current_time.tm_min);
+        int m_len_chars = 2;
+
+        int16_t tx = geom->cx + (geom->m_dx * 84) / 100;
+        int16_t ty = geom->cy + (geom->m_dy * 84) / 100;
+        int dw = 3, dh = 5;
+        int gx = ((tx - origin_x) * SUB_N) / span_x - (m_len_chars * dw) / 2;
+        int gy = ((ty - origin_y) * SUB_N) / span_y - dh / 2;
+        if (gx < 0) gx = 0;
+        if (gy < 0) gy = 0;
+        if (gx + m_len_chars * dw > SUB_N) gx = SUB_N - m_len_chars * dw;
+        if (gy + dh > SUB_N) gy = SUB_N - dh;
+
+        for (int i = 0; i < m_len_chars; i++) {
+            int cgx = gx + i * dw;
+            int16_t bx = origin_x + (cgx * span_x) / SUB_N;
+            int16_t by = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw = origin_x + ((cgx + dw) * span_x) / SUB_N - bx;
+            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+            draw_glyph(ctx, find_glyph_index(m_str[i]), bx, by, bw, bh, true, fg_color);
+            subgrid_occupy(occ, cgx, gy, dw, dh);
+        }
+    }
+
     // 2. Scattered Multi-Scale Pass (max_lvl down to min_lvl)
     int min_lvl = s_settings.min_char_size;
+    if (min_lvl < 1) min_lvl = 1;
+    if (min_lvl > 4) min_lvl = 4;
     int max_lvl = s_settings.max_char_size;
+    if (max_lvl < min_lvl) max_lvl = min_lvl;
+    if (max_lvl > 6) max_lvl = 6;
     int max_px_jitter = (s_settings.imperfection >= 40) ? 2 :
                         ((s_settings.imperfection >= 15) ? 1 : 0);
 
@@ -1264,12 +1544,15 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         int base_gh = LVL_H[lvl];
         uint16_t stride = LVL_STRIDE[lvl];
 
-        int accept_pct = 100;
-        if (lvl > min_lvl) {
-            int tier_rank = lvl - min_lvl;
-            int span = (max_lvl > min_lvl) ? (max_lvl - min_lvl) : 1;
-            int top_cap = 15 + (s_settings.big_char_bias * 75) / 100;
-            accept_pct = top_cap + ((span - tier_rank) * (95 - top_cap)) / span;
+        int accept_pct;
+        if (lvl >= 4) {
+            accept_pct = 35 + (s_settings.big_char_bias * 55) / 100;
+        } else if (lvl == 3) {
+            accept_pct = 25 + (s_settings.big_char_bias * 50) / 100;
+        } else if (lvl == 2) {
+            accept_pct = (min_lvl == 2) ? 75 : 45;
+        } else {
+            accept_pct = 85;
         }
 
         int idx = (int)(fast_hash(lvl, minute_salt, 53) % SUB_CELLS);
@@ -1310,6 +1593,9 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
             int16_t mid_x = bx + bw / 2;
             int16_t mid_y = by + bh / 2;
             bool near_hand = is_near_hands(geom, mid_x, mid_y);
+            if (min_lvl > 1 && lvl == 1 && total_cov >= 45 && !near_hand) {
+                continue;
+            }
             if (!geom->is_full_rect && lvl == min_lvl && total_cov < 27 && !near_hand) {
                 int skip_chance = (total_cov <= 18) ? (int)s_settings.imperfection
                                                     : ((int)s_settings.imperfection / 2);
@@ -1440,6 +1726,8 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
         h_len = (geom.r_dial * 48) / 100; // Distinctively short and stubby (48% radius)
         m_len = geom.r_dial + (dial_span / 24); // Full reach (104% radius)
     }
+    geom.h_len = h_len;
+    geom.m_len = m_len;
 
     int16_t h_core = (dial_span * 46) / 1000; // ~9.0px half-width (18px channel on Emery)
     int16_t h_near = h_core + (dial_span / 16);
