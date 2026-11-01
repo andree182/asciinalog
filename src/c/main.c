@@ -462,6 +462,47 @@ static bool glyph_fits_cleanly(const DialGeometry *g, int glyph_idx,
     return (outside_dial_bits * 9) <= (total_bits * 2);
 }
 
+static bool is_rect_completely_free_from_hands(const DialGeometry *g,
+                                               int16_t rx, int16_t ry,
+                                               int16_t rw, int16_t rh,
+                                               int16_t margin) {
+    int16_t x0 = rx - margin;
+    int16_t y0 = ry - margin;
+    int16_t x1 = rx + rw + margin;
+    int16_t y1 = ry + rh + margin;
+
+    if (x0 < 2 || y0 < 2 || x1 >= g->screen_w - 2 || y1 >= g->screen_h - 2) {
+        return false;
+    }
+
+    if (!g->is_full_rect) {
+        int16_t corners[4][2] = { {x0, y0}, {x1, y0}, {x0, y1}, {x1, y1} };
+        for (int i = 0; i < 4; i++) {
+            int32_t dx = corners[i][0] - g->cx;
+            int32_t dy = corners[i][1] - g->cy;
+            if ((dx * dx + dy * dy) > g->r_dial_sq) {
+                return false;
+            }
+        }
+    }
+
+    // Step across date rectangle + margin to ensure hand core AND near corridor never obscure text
+    for (int16_t y = y0; y <= y1; y += 4) {
+        for (int16_t x = x0; x <= x1; x += 4) {
+            if (is_in_hand_core(g, x, y) || is_near_hands(g, x, y)) {
+                return false;
+            }
+        }
+    }
+    if (is_in_hand_core(g, x0, y0) || is_near_hands(g, x0, y0) ||
+        is_in_hand_core(g, x1, y0) || is_near_hands(g, x1, y0) ||
+        is_in_hand_core(g, x0, y1) || is_near_hands(g, x0, y1) ||
+        is_in_hand_core(g, x1, y1) || is_near_hands(g, x1, y1)) {
+        return false;
+    }
+    return true;
+}
+
 // ============================================================================
 // HASHING, AALIB MATCHING & DRAWING
 // ============================================================================
@@ -487,6 +528,41 @@ static void subgrid_occupy(uint64_t occ[], int gx, int gy, int gw, int gh) {
     uint64_t mask = (((uint64_t)1 << gw) - 1ULL) << gx;
     for (int y = gy; y < gy + gh; y++) {
         occ[y] |= mask;
+    }
+}
+
+static void occupy_organic_glyph_cells(uint64_t occ[], int glyph_idx,
+                                       int gx0, int gy0, int gw, int gh) {
+    if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
+    const uint8_t *rows_data = s_glyphs[glyph_idx].rows;
+    for (int dy = 0; dy < gh; dy++) {
+        int r0 = (dy * 7) / gh;
+        int r1 = ((dy + 1) * 7 + gh - 1) / gh;
+        if (r1 > 7) r1 = 7;
+
+        for (int dx = 0; dx < gw; dx++) {
+            int c0 = (dx * 7) / gw;
+            int c1 = ((dx + 1) * 7 + gw - 1) / gw;
+            if (c1 > 7) c1 = 7;
+
+            bool has_pixels = false;
+            for (int r = r0; r < r1 && !has_pixels; r++) {
+                uint8_t row_bits = rows_data[r];
+                for (int c = c0; c < c1; c++) {
+                    if (row_bits & (1 << (7 - c))) {
+                        has_pixels = true;
+                        break;
+                    }
+                }
+            }
+            if (has_pixels) {
+                int gx = gx0 + dx;
+                int gy = gy0 + dy;
+                if (gx >= 0 && gx < SUB_N && gy >= 0 && gy < SUB_N) {
+                    occ[gy] |= ((uint64_t)1 << gx);
+                }
+            }
+        }
     }
 }
 
@@ -690,6 +766,44 @@ static void grid_rect_occupy(uint32_t occ[], int gx, int gy, int gw, int gh) {
     }
 }
 
+// Occupy only subcells where the glyph actually contains stroke pixels.
+// Unused pockets (e.g. lower-right of 'P', upper-right of 'b', lower-left of 'q',
+// empty areas of 'S', '4', '7', 'L', '1') remain free in occ to be nested with smaller glyphs!
+static void occupy_glyph_cells(uint32_t occ[], int cols, int rows,
+                               int glyph_idx, int gx0, int gy0, int bs) {
+    if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
+    const uint8_t *rows_data = s_glyphs[glyph_idx].rows;
+    for (int dy = 0; dy < bs; dy++) {
+        int r0 = (dy * 7) / bs;
+        int r1 = ((dy + 1) * 7 + bs - 1) / bs;
+        if (r1 > 7) r1 = 7;
+
+        for (int dx = 0; dx < bs; dx++) {
+            int c0 = (dx * 7) / bs;
+            int c1 = ((dx + 1) * 7 + bs - 1) / bs;
+            if (c1 > 7) c1 = 7;
+
+            bool has_pixels = false;
+            for (int r = r0; r < r1 && !has_pixels; r++) {
+                uint8_t row_bits = rows_data[r];
+                for (int c = c0; c < c1; c++) {
+                    if (row_bits & (1 << (7 - c))) {
+                        has_pixels = true;
+                        break;
+                    }
+                }
+            }
+            if (has_pixels) {
+                int gx = gx0 + dx;
+                int gy = gy0 + dy;
+                if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
+                    occ[gy] |= (1U << gx);
+                }
+            }
+        }
+    }
+}
+
 static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
                                 uint32_t occ[], int cols, int rows,
                                 int16_t origin_x, int16_t origin_y,
@@ -700,26 +814,25 @@ static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
     if (gx0 < 0 || gy0 < 0 || (gx0 + word_len * dw) > cols || (gy0 + dh) > rows) {
         return false;
     }
-    int16_t bw = dw * cell_w;
-    int16_t bh = dh * cell_h;
+    int16_t full_w = word_len * dw * cell_w;
+    int16_t full_h = dh * cell_h;
+    int16_t rx0 = origin_x + gx0 * cell_w;
+    int16_t ry0 = origin_y + gy0 * cell_h;
+
+    // Full clearance check: text banner must never be obscured or grazed by hands!
+    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 3)) {
+        return false;
+    }
 
     for (int i = 0; i < word_len; i++) {
         int gx = gx0 + i * dw;
         if (!grid_rect_free(occ, cols, rows, gx, gy0, dw, dh)) {
             return false;
         }
-        int16_t bx = origin_x + gx * cell_w;
-        int16_t by = origin_y + gy0 * cell_h;
-        uint8_t q[4];
-        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) {
-            return false;
-        }
-        int g_idx = find_glyph_index(word[i]);
-        if (!glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
-            return false;
-        }
     }
 
+    int16_t bw = dw * cell_w;
+    int16_t bh = dh * cell_h;
     for (int i = 0; i < word_len; i++) {
         int gx = gx0 + i * dw;
         int16_t bx = origin_x + gx * cell_w;
@@ -741,30 +854,28 @@ static bool try_place_grid_stacked_date(GContext *ctx, const DialGeometry *geom,
     if (gx0 < 0 || gy0 < 0 || (gx0 + 3 * dw) > cols || (gy0 + 2 * dh) > rows) {
         return false;
     }
-    int16_t bw = dw * cell_w;
-    int16_t bh = dh * cell_h;
-    int num_gx0 = gx0 + (dw / 2);
+    int16_t full_w = 3 * dw * cell_w;
+    int16_t full_h = 2 * dh * cell_h;
+    int16_t rx0 = origin_x + gx0 * cell_w;
+    int16_t ry0 = origin_y + gy0 * cell_h;
 
+    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 3)) {
+        return false;
+    }
+
+    int num_gx0 = gx0 + (dw / 2);
     for (int i = 0; i < 3; i++) {
         int gx = gx0 + i * dw;
         if (!grid_rect_free(occ, cols, rows, gx, gy0, dw, dh)) return false;
-        int16_t bx = origin_x + gx * cell_w;
-        int16_t by = origin_y + gy0 * cell_h;
-        uint8_t q[4];
-        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) return false;
-        if (!glyph_fits_cleanly(geom, find_glyph_index(day_str[i]), bx, by, bw, bh)) return false;
     }
     for (int i = 0; i < 2; i++) {
         int gx = num_gx0 + i * dw;
         int gy = gy0 + dh;
         if (!grid_rect_free(occ, cols, rows, gx, gy, dw, dh)) return false;
-        int16_t bx = origin_x + gx * cell_w;
-        int16_t by = origin_y + gy * cell_h;
-        uint8_t q[4];
-        if (sample_rect_quadrants(geom, bx, by, bw, bh, q) < 45) return false;
-        if (!glyph_fits_cleanly(geom, find_glyph_index(num_str[i]), bx, by, bw, bh)) return false;
     }
 
+    int16_t bw = dw * cell_w;
+    int16_t bh = dh * cell_h;
     for (int i = 0; i < 3; i++) {
         int gx = gx0 + i * dw;
         draw_glyph(ctx, find_glyph_index(day_str[i]),
@@ -910,7 +1021,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
 
                 if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
                     draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
-                    grid_rect_occupy(occ, gx, gy, bs, bs);
+                    occupy_glyph_cells(occ, cols, rows, g_idx, gx, gy, bs);
                 }
             }
         }
@@ -992,6 +1103,14 @@ static bool try_place_organic_word(GContext *ctx, const DialGeometry *geom,
     if (gx0 < 0 || gy0 < 0 || (gx0 + word_len * dw) > SUB_N || (gy0 + dh) > SUB_N) {
         return false;
     }
+    int16_t rx0 = origin_x + (gx0 * span_x) / SUB_N;
+    int16_t ry0 = origin_y + (gy0 * span_y) / SUB_N;
+    int16_t full_w = origin_x + ((gx0 + word_len * dw) * span_x) / SUB_N - rx0;
+    int16_t full_h = origin_y + ((gy0 + dh) * span_y) / SUB_N - ry0;
+    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 3)) {
+        return false;
+    }
+
     int gy_arr[8];
     for (int i = 0; i < word_len; i++) {
         int gx = gx0 + i * dw;
@@ -1217,7 +1336,11 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
 
             if (g_idx >= 0) {
                 draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
-                subgrid_occupy(occ, gx, gy, gw, gh);
+                if (lvl >= 4) {
+                    occupy_organic_glyph_cells(occ, g_idx, gx, gy, gw, gh);
+                } else {
+                    subgrid_occupy(occ, gx, gy, gw, gh);
+                }
             }
         }
     }
@@ -1270,6 +1393,13 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
 static void canvas_update_proc(Layer *layer, GContext *ctx) {
     GRect bounds = layer_get_bounds(layer);
 
+    // Fetch fresh local time so ticks and settings reloads are always synchronized
+    time_t now = time(NULL);
+    struct tm *local_now = localtime(&now);
+    if (local_now) {
+        s_current_time = *local_now;
+    }
+
     GColor bg_color = s_settings.invert_colors ? GColorWhite : GColorBlack;
     GColor fg_color = s_settings.invert_colors ? GColorBlack : GColorWhite;
 
@@ -1304,23 +1434,22 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     if (geom.is_full_rect) {
         int16_t h_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, h_angle);
         int16_t m_edge = ray_to_rect_distance(geom.cx, geom.cy, bounds.size.w, bounds.size.h, m_angle);
-        h_len = (h_edge * 57) / 100;
-        m_len = (m_edge * 94) / 100;
+        h_len = (h_edge * 48) / 100;
+        m_len = (m_edge * 95) / 100;
     } else {
-        h_len = (geom.r_dial * 57) / 100;
-        m_len = geom.r_dial + (dial_span / 24);
+        h_len = (geom.r_dial * 48) / 100; // Distinctively short and stubby (48% radius)
+        m_len = geom.r_dial + (dial_span / 24); // Full reach (104% radius)
     }
 
-    int16_t h_tail = (geom.r_dial * 9) / 100;
-    int16_t h_core = (dial_span * 54) / 1000; // ~10.5px half-width (21px channel on Emery)
+    int16_t h_core = (dial_span * 46) / 1000; // ~9.0px half-width (18px channel on Emery)
     int16_t h_near = h_core + (dial_span / 16);
     geom.h_core_w_sq = (int32_t)h_core * (int32_t)h_core;
     geom.h_near_w_sq = (int32_t)h_near * (int32_t)h_near;
 
     int32_t h_sin = sin_lookup(h_angle);
     int32_t h_cos = cos_lookup(h_angle);
-    geom.h_x0 = geom.cx - (int16_t)((h_sin * h_tail) / TRIG_MAX_RATIO);
-    geom.h_y0 = geom.cy + (int16_t)((h_cos * h_tail) / TRIG_MAX_RATIO);
+    geom.h_x0 = geom.cx;
+    geom.h_y0 = geom.cy;
     int16_t h_x1 = geom.cx + (int16_t)((h_sin * h_len) / TRIG_MAX_RATIO);
     int16_t h_y1 = geom.cy - (int16_t)((h_cos * h_len) / TRIG_MAX_RATIO);
     geom.h_dx = h_x1 - geom.h_x0;
@@ -1328,16 +1457,15 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     geom.h_len_sq = (int32_t)geom.h_dx * (int32_t)geom.h_dx +
                     (int32_t)geom.h_dy * (int32_t)geom.h_dy;
 
-    int16_t m_tail = (geom.r_dial * 10) / 100;
-    int16_t m_core = (dial_span * 38) / 1000; // ~7.5px half-width (15px channel on Emery)
+    int16_t m_core = (dial_span * 36) / 1000; // ~7.0px half-width (14px channel on Emery)
     int16_t m_near = m_core + (dial_span / 16);
     geom.m_core_w_sq = (int32_t)m_core * (int32_t)m_core;
     geom.m_near_w_sq = (int32_t)m_near * (int32_t)m_near;
 
     int32_t m_sin = sin_lookup(m_angle);
     int32_t m_cos = cos_lookup(m_angle);
-    geom.m_x0 = geom.cx - (int16_t)((m_sin * m_tail) / TRIG_MAX_RATIO);
-    geom.m_y0 = geom.cy + (int16_t)((m_cos * m_tail) / TRIG_MAX_RATIO);
+    geom.m_x0 = geom.cx;
+    geom.m_y0 = geom.cy;
     int16_t m_x1 = geom.cx + (int16_t)((m_sin * m_len) / TRIG_MAX_RATIO);
     int16_t m_y1 = geom.cy - (int16_t)((m_cos * m_len) / TRIG_MAX_RATIO);
     geom.m_dx = m_x1 - geom.m_x0;
