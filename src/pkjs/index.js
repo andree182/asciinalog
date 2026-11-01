@@ -1,6 +1,6 @@
 'use strict';
 
-var STORAGE_KEY = 'asciinalog_settings_v3';
+var STORAGE_KEY = 'asciinalog_settings_v4';
 
 function isRoundWatch() {
   try {
@@ -12,6 +12,24 @@ function isRoundWatch() {
     }
   } catch (e) {}
   return false;
+}
+
+function isColorWatch() {
+  try {
+    if (Pebble.getActiveWatchInfo) {
+      var info = Pebble.getActiveWatchInfo();
+      if (info && info.platform) {
+        var p = info.platform;
+        if (p === 'aplite' || p === 'diorite' || p === 'flint') {
+          return false;
+        }
+        if (p === 'basalt' || p === 'chalk' || p === 'emery' || p === 'gabbro') {
+          return true;
+        }
+      }
+    }
+  } catch (e) {}
+  return true;
 }
 
 var DEFAULTS = {
@@ -29,33 +47,45 @@ var DEFAULTS = {
   FILL_MODE: 1,          // 0 = Circular Dial, 1 = Full Screen Rectangle (default on rectangle watches)
   LAYOUT_STYLE: 0,       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
   CONTRAST_MODE: 0,      // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform Solid
-  RANDOM_COLORS: 0       // 0 = Off (white/fg), 1 = On (random light colors on color watches)
+  RANDOM_COLORS: 1       // 0 = Off, 1 = Colorful Noise / White Comps, 2 = Colorful Comps / White Noise
 };
 
-function loadSettings() {
+function getPlatformDefaults() {
   var isRound = isRoundWatch();
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      var parsed = JSON.parse(raw);
-      var out = {};
-      for (var k in DEFAULTS) {
-        if (DEFAULTS.hasOwnProperty(k)) {
-          out[k] = (parsed[k] !== undefined) ? parsed[k] : DEFAULTS[k];
-        }
-      }
-      if (isRound) out.FILL_MODE = 0;
-      return out;
-    }
-  } catch (e) {
-    console.log('Failed to load settings: ' + e);
-  }
+  var isColor = isColorWatch();
   var d = {};
   for (var k in DEFAULTS) {
     if (DEFAULTS.hasOwnProperty(k)) d[k] = DEFAULTS[k];
   }
   if (isRound) d.FILL_MODE = 0;
+  if (isColor) {
+    d.RANDOM_COLORS = 1; // Default on color: colorful noise, white complications
+    d.CONTRAST_MODE = 0;
+  } else {
+    d.RANDOM_COLORS = 0; // Off on B&W
+    d.CONTRAST_MODE = 1; // Default mode 1 on B&W: grey complications, white noise
+  }
   return d;
+}
+
+function loadSettings() {
+  var defs = getPlatformDefaults();
+  try {
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      var out = {};
+      for (var k in defs) {
+        if (defs.hasOwnProperty(k)) {
+          out[k] = (parsed[k] !== undefined) ? parsed[k] : defs[k];
+        }
+      }
+      return out;
+    }
+  } catch (e) {
+    console.log('Failed to load settings: ' + e);
+  }
+  return defs;
 }
 
 function buildConfigHtml(s) {
@@ -154,12 +184,13 @@ function buildConfigHtml(s) {
     '<div class="hint">Shows minute number right around the end of the analog minute hand</div></div>',
 
     // Colors
-    '<div class="card"><div class="row"><label>Random Pastel Colors (Color watches)</label>',
-    '<div class="toggle-btn" id="grp_random_colors">',
-    '<button type="button" class="btn-opt' + (!s.RANDOM_COLORS ? ' active' : '') + '" onclick="setVal(\'random_colors\',0)">OFF</button>',
-    '<button type="button" class="btn-opt' + (s.RANDOM_COLORS ? ' active' : '') + '" onclick="setVal(\'random_colors\',1)">ON</button>',
-    '</div><input type="hidden" id="random_colors" value="' + (s.RANDOM_COLORS ? 1 : 0) + '"></div>',
-    '<div class="hint">Draws background in light pastel colors while complications stay readable</div></div>',
+    '<div class="card"><div class="row"><label>Color Palette (Color watches)</label></div>',
+    '<div class="btn-group" id="grp_random_colors">',
+    '<button type="button" class="btn-opt' + (s.RANDOM_COLORS === 1 ? ' active' : '') + '" data-val="1" onclick="setVal(\'random_colors\',1)">Colorful Noise</button>',
+    '<button type="button" class="btn-opt' + (s.RANDOM_COLORS === 2 ? ' active' : '') + '" data-val="2" onclick="setVal(\'random_colors\',2)">Colorful Comps</button>',
+    '<button type="button" class="btn-opt' + (s.RANDOM_COLORS === 0 ? ' active' : '') + '" data-val="0" onclick="setVal(\'random_colors\',0)">Off (Monochrome)</button>',
+    '</div><input type="hidden" id="random_colors" value="' + s.RANDOM_COLORS + '">',
+    '<div class="hint">Colorful Noise: pastel background with white comps &middot; Colorful Comps: pastel comps with white noise</div></div>',
 
     '<div class="card"><div class="row"><label>Invert Colors (Black on White)</label>',
     '<div class="toggle-btn" id="grp_invert">',
@@ -184,13 +215,13 @@ function buildConfigHtml(s) {
     '<input type="range" id="punct" min="0" max="50" step="2" value="' + s.PUNCT_RATIO + '" oninput="sync()">',
     '<div class="hint">0% = pure alphanumeric &middot; 10-15% = sparse organic punctuation</div></div>',
 
-    '<div class="card"><div class="row"><label>Contrast / Shading Mode</label></div>',
+    '<div class="card"><div class="row"><label>Contrast / Shading Mode (B&W or Color Off)</label></div>',
     '<div class="btn-group" id="grp_contrast_mode">',
     '<button type="button" class="btn-opt' + (s.CONTRAST_MODE === 0 ? ' active' : '') + '" onclick="setVal(\'contrast_mode\',0)">White Comp / Grey Noise</button>',
     '<button type="button" class="btn-opt' + (s.CONTRAST_MODE === 1 ? ' active' : '') + '" onclick="setVal(\'contrast_mode\',1)">Grey Comp / White Noise</button>',
     '<button type="button" class="btn-opt' + (s.CONTRAST_MODE === 2 ? ' active' : '') + '" onclick="setVal(\'contrast_mode\',2)">Uniform</button>',
     '</div><input type="hidden" id="contrast_mode" value="' + s.CONTRAST_MODE + '">',
-    '<div class="hint">In Inverted mode, White becomes Black and vice versa.</div></div>',
+    '<div class="hint">Active on B&W watches, or when Color Mode is Off. Default is Grey Comp on B&W.</div></div>',
 
     '</div></details>',
 
@@ -203,7 +234,8 @@ function buildConfigHtml(s) {
     '  if(grp){',
     '    var btns=grp.querySelectorAll(".btn-opt");',
     '    btns.forEach(function(b,i){',
-    '      if(i===val) b.classList.add("active");',
+    '      var bval = b.hasAttribute("data-val") ? parseInt(b.getAttribute("data-val"),10) : i;',
+    '      if(bval===val) b.classList.add("active");',
     '      else b.classList.remove("active");',
     '    });',
     '  }',

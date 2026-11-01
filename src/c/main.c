@@ -11,7 +11,7 @@
 #define SUB_N 48
 #define SUB_CELLS (SUB_N * SUB_N)
 #define MAX_GRID_ROWS 36
-#define SETTINGS_PERSIST_KEY 106
+#define SETTINGS_PERSIST_KEY 107
 
 typedef struct {
     uint8_t min_char_size;      // 1..4 (default 2)
@@ -28,7 +28,7 @@ typedef struct {
     uint8_t fill_mode;          // 0 = Circular Dial, 1 = Full Screen Rectangle
     uint8_t layout_style;       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
     uint8_t contrast_mode;      // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform
-    uint8_t random_colors;      // 0 = Off, 1 = Random Light Colors (Color watches)
+    uint8_t random_colors;      // 0 = Off, 1 = Colorful Noise / White Comps, 2 = Colorful Comps / White Noise
 } WatchSettings;
 
 static WatchSettings s_settings;
@@ -218,8 +218,13 @@ static void set_default_settings(void) {
     s_settings.fill_mode          = 1;  // Full Screen Rectangle on rectangle watches
 #endif
     s_settings.layout_style       = 0;  // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+#if defined(PBL_COLOR)
     s_settings.contrast_mode      = 0;  // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform
-    s_settings.random_colors      = 0;  // Pastel colors OFF
+    s_settings.random_colors      = 1;  // Default on color: colorful noise, white complications
+#else
+    s_settings.contrast_mode      = 1;  // Default on B&W: mode 1 (grey complications, white noise)
+    s_settings.random_colors      = 0;  // Off on B&W
+#endif
 }
 
 static void clamp_settings(void) {
@@ -241,7 +246,10 @@ static void clamp_settings(void) {
     if (s_settings.fill_mode > 1) s_settings.fill_mode = 1;
     if (s_settings.layout_style > 1) s_settings.layout_style = 1;
     if (s_settings.contrast_mode > 2) s_settings.contrast_mode = 2;
-    if (s_settings.random_colors > 1) s_settings.random_colors = 1;
+    if (s_settings.random_colors > 2) s_settings.random_colors = 2;
+#if !defined(PBL_COLOR)
+    s_settings.random_colors = 0;
+#endif
 #if defined(PBL_ROUND)
     s_settings.fill_mode = 0;
 #endif
@@ -668,12 +676,15 @@ static const GColor s_dark_garbage_colors[] = {
 #define NUM_DARK_GARBAGE_COLORS ((int)(sizeof(s_dark_garbage_colors) / sizeof(s_dark_garbage_colors[0])))
 
 static GColor get_garbage_color(uint32_t seed, GColor default_fg) {
-    if (s_settings.random_colors) {
+    if (s_settings.random_colors == 1) {
         if (s_settings.invert_colors) {
             return s_dark_garbage_colors[(seed >> 3) % NUM_DARK_GARBAGE_COLORS];
         } else {
             return s_light_garbage_colors[(seed >> 3) % NUM_LIGHT_GARBAGE_COLORS];
         }
+    }
+    if (s_settings.random_colors == 2) {
+        return default_fg;
     }
     if (s_settings.contrast_mode == 0) {
         return s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
@@ -695,7 +706,16 @@ static void draw_glyph_rows(GContext *ctx, const uint8_t rows[8],
 #if defined(PBL_COLOR)
     if (is_complication) {
         GColor c;
-        if (s_settings.contrast_mode == 1) {
+        if (s_settings.random_colors == 2) {
+            uint32_t seed = (uint32_t)((x0 * 37) ^ (y0 * 53) ^ 0x9e3779b9);
+            if (s_settings.invert_colors) {
+                c = s_dark_garbage_colors[(seed >> 2) % NUM_DARK_GARBAGE_COLORS];
+            } else {
+                c = s_light_garbage_colors[(seed >> 2) % NUM_LIGHT_GARBAGE_COLORS];
+            }
+        } else if (s_settings.random_colors == 1) {
+            c = s_settings.invert_colors ? GColorBlack : GColorWhite;
+        } else if (s_settings.contrast_mode == 1) {
             c = s_settings.invert_colors ? GColorDarkGray : GColorLightGray;
         } else {
             c = s_settings.invert_colors ? GColorBlack : GColorWhite;
