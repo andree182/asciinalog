@@ -1,6 +1,6 @@
 'use strict';
 
-var STORAGE_KEY = 'asciinalog_settings_v4';
+var STORAGE_KEY = 'asciinalog_settings_v5';
 
 function isRoundWatch() {
   try {
@@ -34,9 +34,9 @@ function isColorWatch() {
 
 var DEFAULTS = {
   MIN_CHAR_SIZE: 2,
-  MAX_CHAR_SIZE: 5,
-  BIG_CHAR_BIAS: 20,
-  PUNCT_RATIO: 12,
+  MAX_CHAR_SIZE: 6,
+  BIG_CHAR_BIAS: 30,
+  PUNCT_RATIO: 25,
   IMPERFECTION: 30,
   SHOW_DATE: 1,
   SHOW_MONTH: 1,
@@ -45,7 +45,7 @@ var DEFAULTS = {
   SHOW_HAND_MINUTE: 0,
   INVERT_COLORS: 0,
   FILL_MODE: 1,          // 0 = Circular Dial, 1 = Full Screen Rectangle (default on rectangle watches)
-  LAYOUT_STYLE: 0,       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+  LAYOUT_STYLE: 1,       // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
   CONTRAST_MODE: 0,      // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform Solid
   RANDOM_COLORS: 1       // 0 = Off, 1 = Colorful Noise / White Comps, 2 = Colorful Comps / White Noise
 };
@@ -117,10 +117,12 @@ function buildConfigHtml(s) {
     '</style></head><body>',
     '<h1>*ASCIInalog*</h1>',
     '<div class="sub">Multi-scale ASCII analog watchface</div>',
-    '<div class="presets" style="display:none;">',
-    '<button type="button" onclick="preset(1,0,2,5,20,12,30)">Default (Rect)</button>',
-    '<button type="button" onclick="preset(0,0,2,5,20,12,30)">Circle</button>',
-    '<button type="button" onclick="preset(1,1,2,5,20,12,30)">Organic</button>',
+    '<div class="presets">',
+    // preset(fm,ls,mn,mx,b,p,i)
+    '<button type="button" onclick="preset(1,1,1,6,60,10,50)">Chaos</button>',
+    '<button type="button" onclick="preset(1,1,1,4,10,0,100)">Ants</button>',
+    '<button type="button" onclick="preset(1,0,1,5,50,15,50)">Plots</button>',
+    '<button type="button" onclick="preset(1,0,1,3,50,50,50)">Dense</button>',
     '</div>',
 
     // Screen Fill Mode
@@ -251,6 +253,7 @@ function buildConfigHtml(s) {
     '  el("v_imp").textContent=el("imp").value+"%";',
     '}',
     'function preset(fm,ls,mn,mx,b,p,i){',
+    '  if(' + (isRoundWatch() ? 'true' : 'false') + ') fm=0;',
     '  setVal("fill_mode",fm);setVal("layout_style",ls);',
     '  el("min_size").value=mn;el("max_size").value=mx;el("bias").value=b;',
     '  el("punct").value=p;el("imp").value=i;sync();',

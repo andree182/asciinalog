@@ -11,7 +11,7 @@
 #define SUB_N 48
 #define SUB_CELLS (SUB_N * SUB_N)
 #define MAX_GRID_ROWS 36
-#define SETTINGS_PERSIST_KEY 107
+#define SETTINGS_PERSIST_KEY 108
 
 typedef struct {
     uint8_t min_char_size;      // 1..4 (default 2)
@@ -201,11 +201,11 @@ static int find_glyph_index(char ch) {
 // ============================================================================
 
 static void set_default_settings(void) {
-    s_settings.min_char_size      = 2;
-    s_settings.max_char_size      = 5;
-    s_settings.big_char_bias      = 20; // Default 20%
-    s_settings.punct_ratio        = 12;
-    s_settings.imperfection       = 30;
+    s_settings.min_char_size      = 1;
+    s_settings.max_char_size      = 6;
+    s_settings.big_char_bias      = 60;
+    s_settings.punct_ratio        = 10;
+    s_settings.imperfection       = 50;
     s_settings.show_date          = 1;  // Day/Word ON
     s_settings.show_month         = 1;  // Month ON
     s_settings.show_battery       = 1;  // Battery ON
@@ -217,7 +217,7 @@ static void set_default_settings(void) {
 #else
     s_settings.fill_mode          = 1;  // Full Screen Rectangle on rectangle watches
 #endif
-    s_settings.layout_style       = 0;  // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
+    s_settings.layout_style       = 1;  // 0 = Semi-Grid Multi-Scale, 1 = Organic Collage
 #if defined(PBL_COLOR)
     s_settings.contrast_mode      = 0;  // 0 = White Comp / Grey Noise, 1 = Grey Comp / White Noise, 2 = Uniform
     s_settings.random_colors      = 1;  // Default on color: colorful noise, white complications
