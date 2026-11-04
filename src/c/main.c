@@ -386,7 +386,7 @@ static bool is_near_hands(const DialGeometry *g, int16_t px, int16_t py) {
 
 static bool is_foreground_point(const DialGeometry *g, int16_t px, int16_t py) {
     if (g->is_full_rect) {
-        if (px < 2 || px >= g->screen_w - 2 || py < 2 || py >= g->screen_h - 2) {
+        if (px < 0 || px >= g->screen_w || py < 0 || py >= g->screen_h) {
             return false;
         }
     } else {
@@ -446,7 +446,7 @@ static int16_t ray_to_rect_distance(int16_t cx, int16_t cy, int16_t sw, int16_t 
 
 static bool glyph_fits_cleanly(const DialGeometry *g, int glyph_idx,
                                int16_t x0, int16_t y0, int16_t bw, int16_t bh) {
-    if (x0 < 1 || y0 < 1 || (x0 + bw) >= g->screen_w - 1 || (y0 + bh) >= g->screen_h - 1) {
+    if (x0 < 0 || y0 < 0 || (x0 + bw) > g->screen_w || (y0 + bh) > g->screen_h) {
         return false;
     }
     const uint8_t *rows = s_glyphs[glyph_idx].rows;
@@ -502,7 +502,7 @@ static bool is_rect_completely_free_from_hands(const DialGeometry *g,
     int16_t x1 = rx + rw + margin;
     int16_t y1 = ry + rh + margin;
 
-    if (x0 < 2 || y0 < 2 || x1 >= g->screen_w - 2 || y1 >= g->screen_h - 2) {
+    if (x0 < 0 || y0 < 0 || x1 > g->screen_w || y1 > g->screen_h) {
         return false;
     }
 
@@ -517,18 +517,17 @@ static bool is_rect_completely_free_from_hands(const DialGeometry *g,
         }
     }
 
-    // Step across date rectangle + margin to ensure hand core AND near corridor never obscure text
-    for (int16_t y = y0; y <= y1; y += 4) {
-        for (int16_t x = x0; x <= x1; x += 4) {
-            if (is_in_hand_core(g, x, y) || is_near_hands(g, x, y)) {
+    // Step across date rectangle to ensure hand core NEVER obscures text
+    for (int16_t y = y0; y <= y1; y += 3) {
+        for (int16_t x = x0; x <= x1; x += 3) {
+            if (is_in_hand_core(g, x, y)) {
                 return false;
             }
         }
     }
-    if (is_in_hand_core(g, x0, y0) || is_near_hands(g, x0, y0) ||
-        is_in_hand_core(g, x1, y0) || is_near_hands(g, x1, y0) ||
-        is_in_hand_core(g, x0, y1) || is_near_hands(g, x0, y1) ||
-        is_in_hand_core(g, x1, y1) || is_near_hands(g, x1, y1)) {
+    if (is_in_hand_core(g, x0, y0) || is_in_hand_core(g, x1 - 1, y0) ||
+        is_in_hand_core(g, x0, y1 - 1) || is_in_hand_core(g, x1 - 1, y1 - 1) ||
+        is_in_hand_core(g, (x0 + x1) / 2, (y0 + y1) / 2)) {
         return false;
     }
     return true;
@@ -861,43 +860,6 @@ static void grid_rect_occupy(uint32_t occ[], int gx, int gy, int gw, int gh) {
     }
 }
 
-// Occupy only subcells where the glyph actually contains stroke pixels.
-// Unused pockets (e.g. lower-right of 'P', upper-right of 'b', lower-left of 'q',
-// empty areas of 'S', '4', '7', 'L', '1') remain free in occ to be nested with smaller glyphs!
-static void occupy_glyph_cells(uint32_t occ[], int cols, int rows,
-                               int glyph_idx, int gx0, int gy0, int bs) {
-    if (glyph_idx < 0 || glyph_idx >= NUM_GLYPHS) return;
-    const uint8_t *rows_data = s_glyphs[glyph_idx].rows;
-    for (int dy = 0; dy < bs; dy++) {
-        int r0 = (dy * 7) / bs;
-        int r1 = ((dy + 1) * 7 + bs - 1) / bs;
-        if (r1 > 7) r1 = 7;
-
-        for (int dx = 0; dx < bs; dx++) {
-            int c0 = (dx * 7) / bs;
-            int c1 = ((dx + 1) * 7 + bs - 1) / bs;
-            if (c1 > 7) c1 = 7;
-
-            bool has_pixels = false;
-            for (int r = r0; r < r1 && !has_pixels; r++) {
-                uint8_t row_bits = rows_data[r];
-                for (int c = c0; c < c1; c++) {
-                    if (row_bits & (1 << (7 - c))) {
-                        has_pixels = true;
-                        break;
-                    }
-                }
-            }
-            if (has_pixels) {
-                int gx = gx0 + dx;
-                int gy = gy0 + dy;
-                if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
-                    occ[gy] |= (1U << gx);
-                }
-            }
-        }
-    }
-}
 
 static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
                                 uint32_t occ[], int cols, int rows,
@@ -914,8 +876,7 @@ static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
     int16_t rx0 = origin_x + gx0 * cell_w;
     int16_t ry0 = origin_y + gy0 * cell_h;
 
-    // Full clearance check: text banner must never be obscured or grazed by hands!
-    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 3)) {
+    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 1)) {
         return false;
     }
 
@@ -939,6 +900,40 @@ static bool try_place_grid_word(GContext *ctx, const DialGeometry *geom,
     return true;
 }
 
+static bool try_place_grid_word_search(GContext *ctx, const DialGeometry *geom,
+                                       uint32_t occ[], int cols, int rows,
+                                       int16_t origin_x, int16_t origin_y,
+                                       int16_t cell_w, int16_t cell_h,
+                                       const char *word, int word_len,
+                                       int dw, int dh, GColor fg_color) {
+    int total_w = word_len * dw;
+    if (total_w > cols || dh > rows) return false;
+
+    static const int row_order[12] = { 65, 25, 55, 35, 75, 18, 45, 82, 12, 50, 88, 8 };
+    for (int ro = 0; ro < 12; ro++) {
+        int gy = (rows * row_order[ro]) / 100;
+        if (gy < 0) gy = 0;
+        if (gy + dh > rows) gy = rows - dh;
+
+        int mid_gx = (cols - total_w) / 2;
+        for (int gx = mid_gx; gx <= cols - total_w; gx++) {
+            if (try_place_grid_word(ctx, geom, occ, cols, rows,
+                                    origin_x, origin_y, cell_w, cell_h,
+                                    word, word_len, gx, gy, dw, dh, fg_color)) {
+                return true;
+            }
+        }
+        for (int gx = mid_gx - 1; gx >= 0; gx--) {
+            if (try_place_grid_word(ctx, geom, occ, cols, rows,
+                                    origin_x, origin_y, cell_w, cell_h,
+                                    word, word_len, gx, gy, dw, dh, fg_color)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static bool try_place_grid_stacked_date(GContext *ctx, const DialGeometry *geom,
                                         uint32_t occ[], int cols, int rows,
                                         int16_t origin_x, int16_t origin_y,
@@ -954,7 +949,7 @@ static bool try_place_grid_stacked_date(GContext *ctx, const DialGeometry *geom,
     int16_t rx0 = origin_x + gx0 * cell_w;
     int16_t ry0 = origin_y + gy0 * cell_h;
 
-    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 3)) {
+    if (!is_rect_completely_free_from_hands(geom, rx0, ry0, full_w, full_h, 1)) {
         return false;
     }
 
@@ -989,6 +984,154 @@ static bool try_place_grid_stacked_date(GContext *ctx, const DialGeometry *geom,
     return true;
 }
 
+static bool try_place_stacked_search(GContext *ctx, const DialGeometry *geom,
+                                     uint32_t occ[], int cols, int rows,
+                                     int16_t origin_x, int16_t origin_y,
+                                     int16_t cell_w, int16_t cell_h,
+                                     const char *day_str, const char *num_str,
+                                     int dw, int dh, GColor fg_color) {
+    int total_w = 3 * dw;
+    int total_h = 2 * dh;
+    if (total_w > cols || total_h > rows) return false;
+
+    static const int row_order[12] = { 60, 25, 50, 35, 70, 18, 42, 80, 12, 65, 85, 8 };
+    for (int ro = 0; ro < 12; ro++) {
+        int gy = (rows * row_order[ro]) / 100;
+        if (gy < 0) gy = 0;
+        if (gy + total_h > rows) gy = rows - total_h;
+
+        for (int gx = 0; gx <= cols - total_w; gx++) {
+            if (try_place_grid_stacked_date(ctx, geom, occ, cols, rows,
+                                            origin_x, origin_y, cell_w, cell_h,
+                                            day_str, num_str, gx, gy, dw, dh, fg_color)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool try_place_battery_search(GContext *ctx, const DialGeometry *geom,
+                                     uint32_t occ[], int cols, int rows,
+                                     int16_t origin_x, int16_t origin_y,
+                                     int16_t cell_w, int16_t cell_h,
+                                     int bw_cells, int bh_cells,
+                                     GColor fg_color) {
+    uint8_t batt_rows[8];
+    get_battery_glyph_rows(batt_rows);
+
+    static const int row_order[10] = { 15, 78, 25, 68, 38, 55, 10, 85, 48, 5 };
+    for (int ro = 0; ro < 10; ro++) {
+        int gy = (rows * row_order[ro]) / 100;
+        if (gy < 0) gy = 0;
+        if (gy + bh_cells > rows) gy = rows - bh_cells;
+
+        for (int gx = cols - bw_cells; gx >= 0; gx--) {
+            if (grid_rect_free(occ, cols, rows, gx, gy, bw_cells, bh_cells)) {
+                int16_t bx = origin_x + gx * cell_w;
+                int16_t by = origin_y + gy * cell_h;
+                int16_t bw = bw_cells * cell_w;
+                int16_t bh = bh_cells * cell_h;
+                if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 1)) {
+                    draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
+                    grid_rect_occupy(occ, gx, gy, bw_cells, bh_cells);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+static void place_hand_tip_digits(GContext *ctx, const DialGeometry *geom,
+                                  uint32_t occ[], int cols, int rows,
+                                  int16_t origin_x, int16_t origin_y,
+                                  int16_t cell_w, int16_t cell_h,
+                                  const char *str, int str_len,
+                                  int16_t hand_dx, int16_t hand_dy, int16_t hand_len,
+                                  GColor fg_color) {
+    if (hand_len <= 0) return;
+    int16_t tip_x = geom->cx + hand_dx;
+    int16_t tip_y = geom->cy + hand_dy;
+
+    int32_t ux = ((int32_t)hand_dx * 100) / hand_len;
+    int32_t uy = ((int32_t)hand_dy * 100) / hand_len;
+    int32_t nx = -uy;
+    int32_t ny = ux;
+
+    for (int size_try = 0; size_try < 3; size_try++) {
+        int dw = (size_try == 0) ? 2 : 1;
+        int dh = (size_try == 2) ? 1 : 2;
+        int total_w_cells = str_len * dw;
+        int total_h_cells = dh;
+        int16_t bw_px = total_w_cells * cell_w;
+        int16_t bh_px = total_h_cells * cell_h;
+
+        int16_t cands[10][2];
+        int num_cands = 0;
+
+        int16_t fwd_dist = cell_h * 2;
+        int16_t side_dist = cell_w * 3;
+
+        // 1. Ahead of tip
+        cands[num_cands][0] = tip_x + (int16_t)((ux * fwd_dist) / 100);
+        cands[num_cands][1] = tip_y + (int16_t)((uy * fwd_dist) / 100);
+        num_cands++;
+
+        // 2. Sideways right
+        cands[num_cands][0] = tip_x + (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y + (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // 3. Sideways left
+        cands[num_cands][0] = tip_x - (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // 4. Flanking back right
+        cands[num_cands][0] = tip_x - (int16_t)((ux * cell_h * 2) / 100) + (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((uy * cell_h * 2) / 100) + (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // 5. Flanking back left
+        cands[num_cands][0] = tip_x - (int16_t)((ux * cell_h * 2) / 100) - (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((uy * cell_h * 2) / 100) - (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // 6. Above / Below / Left / Right
+        cands[num_cands][0] = tip_x; cands[num_cands][1] = tip_y - bh_px - 2; num_cands++;
+        cands[num_cands][0] = tip_x; cands[num_cands][1] = tip_y + 2; num_cands++;
+        cands[num_cands][0] = tip_x + 2; cands[num_cands][1] = tip_y - bh_px / 2; num_cands++;
+        cands[num_cands][0] = tip_x - bw_px - 2; cands[num_cands][1] = tip_y - bh_px / 2; num_cands++;
+
+        for (int c = 0; c < num_cands; c++) {
+            int16_t cx = cands[c][0];
+            int16_t cy = cands[c][1];
+            int gx = (cx - origin_x) / cell_w - total_w_cells / 2;
+            int gy = (cy - origin_y) / cell_h - total_h_cells / 2;
+            if (gx < 0) gx = 0;
+            if (gy < 0) gy = 0;
+            if (gx + total_w_cells > cols) gx = cols - total_w_cells;
+            if (gy + total_h_cells > rows) gy = rows - total_h_cells;
+
+            int16_t rx = origin_x + gx * cell_w;
+            int16_t ry = origin_y + gy * cell_h;
+
+            if (grid_rect_free(occ, cols, rows, gx, gy, total_w_cells, total_h_cells) &&
+                is_rect_completely_free_from_hands(geom, rx, ry, bw_px, bh_px, 1)) {
+                for (int i = 0; i < str_len; i++) {
+                    int cgx = gx + i * dw;
+                    draw_glyph(ctx, find_glyph_index(str[i]),
+                               origin_x + cgx * cell_w, origin_y + gy * cell_h,
+                               dw * cell_w, dh * cell_h, true, fg_color);
+                    grid_rect_occupy(occ, cgx, gy, dw, dh);
+                }
+                return;
+            }
+        }
+    }
+}
+
 static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
     GRect bounds = layer_get_bounds(layer);
     int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
@@ -1010,7 +1153,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
     int minute_salt = s_current_time.tm_hour * 60 + s_current_time.tm_min;
 
     // 1. Atomic Complication Word (e.g. "SAT-31")
-    // Placed ONLY as an unobstructed whole so digits are NEVER dropped mid-word.
+    // Tries larger banners first; progressively falls back to smaller/stacked fonts to guarantee fit without ever clipping or hiding under hands!
     if (s_settings.show_date) {
         char date_word[10];
         char num_word[4];
@@ -1020,48 +1163,47 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
         snprintf(num_word, sizeof(num_word), "%02d", s_current_time.tm_mday);
         bool placed = false;
 
-        // Pass A: Large 3x3 hero banner ("SAT-31" = 18 cols wide)
+        // Try large banner (3x3)
         if (s_settings.max_char_size >= 5 && cols >= 20) {
-            static const int pct_y[6] = { 62, 24, 55, 31, 68, 17 };
-            static const int off_x[5] = { 0, -1, 1, -2, 2 };
-            int cx_gx = (cols - 18) / 2;
-            for (int py = 0; py < 6 && !placed; py++) {
-                int gy = (rows * pct_y[py]) / 100;
-                for (int ox = 0; ox < 5 && !placed; ox++) {
-                    placed = try_place_grid_word(ctx, geom, occ, cols, rows,
-                                                 origin_x, origin_y, cell_w, cell_h,
-                                                 date_word, 6, cx_gx + off_x[ox], gy, 3, 3, fg_color);
-                }
-            }
+            placed = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                origin_x, origin_y, cell_w, cell_h,
+                                                date_word, 6, 3, 3, fg_color);
         }
-
-        // Pass B: Medium 2x3 banner ("SAT-31" = 12 cols wide, shifts left/right to dodge vertical hands)
-        if (!placed) {
-            static const int pct_y[8] = { 62, 24, 55, 31, 70, 16, 46, 38 };
-            static const int off_x[7] = { 0, -2, 2, -4, 4, -6, 6 };
-            int cx_gx = (cols - 12) / 2;
-            for (int py = 0; py < 8 && !placed; py++) {
-                int gy = (rows * pct_y[py]) / 100;
-                for (int ox = 0; ox < 7 && !placed; ox++) {
-                    placed = try_place_grid_word(ctx, geom, occ, cols, rows,
-                                                 origin_x, origin_y, cell_w, cell_h,
-                                                 date_word, 6, cx_gx + off_x[ox], gy, 2, 3, fg_color);
-                }
-            }
+        // Try medium banner (2x3)
+        if (!placed && s_settings.max_char_size >= 4) {
+            placed = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                origin_x, origin_y, cell_w, cell_h,
+                                                date_word, 6, 2, 3, fg_color);
         }
-
-        // Pass C: Guaranteed 2-line quadrant badge ("SAT" over "31", 6x4 cells)
+        // Try standard banner (2x2)
         if (!placed) {
-            int q_gx[6] = { cols - 8, 2, cols - 8, 2, 2, cols - 8 };
-            int q_gy[6] = { (rows * 58) / 100, (rows * 58) / 100,
-                            (rows * 24) / 100, (rows * 24) / 100,
-                            (rows * 41) / 100, (rows * 41) / 100 };
-            for (int q = 0; q < 6 && !placed; q++) {
-                placed = try_place_grid_stacked_date(ctx, geom, occ, cols, rows,
-                                                     origin_x, origin_y, cell_w, cell_h,
-                                                     s_day_names[wday], num_word,
-                                                     q_gx[q], q_gy[q], 2, 2, fg_color);
-            }
+            placed = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                origin_x, origin_y, cell_w, cell_h,
+                                                date_word, 6, 2, 2, fg_color);
+        }
+        // Try stacked badge (2x2)
+        if (!placed) {
+            placed = try_place_stacked_search(ctx, geom, occ, cols, rows,
+                                              origin_x, origin_y, cell_w, cell_h,
+                                              s_day_names[wday], num_word, 2, 2, fg_color);
+        }
+        // Try compact banner (1x2)
+        if (!placed) {
+            placed = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                origin_x, origin_y, cell_w, cell_h,
+                                                date_word, 6, 1, 2, fg_color);
+        }
+        // Try compact stacked badge (1x2)
+        if (!placed) {
+            placed = try_place_stacked_search(ctx, geom, occ, cols, rows,
+                                              origin_x, origin_y, cell_w, cell_h,
+                                              s_day_names[wday], num_word, 1, 2, fg_color);
+        }
+        // Try micro stacked badge (1x1)
+        if (!placed) {
+            placed = try_place_stacked_search(ctx, geom, occ, cols, rows,
+                                              origin_x, origin_y, cell_w, cell_h,
+                                              s_day_names[wday], num_word, 1, 1, fg_color);
         }
     }
 
@@ -1070,105 +1212,52 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
         int mon = (s_current_time.tm_mon >= 0 && s_current_time.tm_mon < 12)
                   ? s_current_time.tm_mon : 0;
         const char *month_str = s_month_names[mon];
-        bool placed_mon = false;
-        static const int m_py[8] = { 24, 70, 32, 60, 42, 50, 18, 76 };
-        static const int m_px[6] = { 4, 68, 18, 52, 32, 44 };
-        for (int py = 0; py < 8 && !placed_mon; py++) {
-            int gy = (rows * m_py[py]) / 100;
-            for (int px = 0; px < 6 && !placed_mon; px++) {
-                int gx = (cols * m_px[px]) / 100;
-                placed_mon = try_place_grid_word(ctx, geom, occ, cols, rows,
-                                                 origin_x, origin_y, cell_w, cell_h,
-                                                 month_str, 3, gx, gy, 2, 2, fg_color);
-            }
+        bool placed_mon = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                     origin_x, origin_y, cell_w, cell_h,
+                                                     month_str, 3, 2, 2, fg_color);
+        if (!placed_mon) {
+            placed_mon = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                     origin_x, origin_y, cell_w, cell_h,
+                                                     month_str, 3, 1, 2, fg_color);
+        }
+        if (!placed_mon) {
+            placed_mon = try_place_grid_word_search(ctx, geom, occ, cols, rows,
+                                                     origin_x, origin_y, cell_w, cell_h,
+                                                     month_str, 3, 1, 1, fg_color);
         }
     }
 
     // 1c. Battery Complication (Single character filled rectangle)
     if (s_settings.show_battery) {
-        uint8_t batt_rows[8];
-        get_battery_glyph_rows(batt_rows);
-        bool placed_batt = false;
-        int bw_cells = 2, bh_cells = 2;
-        static const int b_py[8] = { 18, 74, 28, 65, 38, 54, 14, 80 };
-        static const int b_px[8] = { 78, 14, 68, 24, 82, 10, 48, 38 };
-        for (int p = 0; p < 8 && !placed_batt; p++) {
-            int gy = (rows * b_py[p]) / 100;
-            int gx = (cols * b_px[p]) / 100;
-            if (gx >= 0 && gy >= 0 && (gx + bw_cells) <= cols && (gy + bh_cells) <= rows) {
-                if (grid_rect_free(occ, cols, rows, gx, gy, bw_cells, bh_cells)) {
-                    int16_t bx = origin_x + gx * cell_w;
-                    int16_t by = origin_y + gy * cell_h;
-                    int16_t bw = bw_cells * cell_w;
-                    int16_t bh = bh_cells * cell_h;
-                    if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 3)) {
-                        draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
-                        grid_rect_occupy(occ, gx, gy, bw_cells, bh_cells);
-                        placed_batt = true;
-                    }
-                }
-            }
+        bool placed_batt = try_place_battery_search(ctx, geom, occ, cols, rows,
+                                                    origin_x, origin_y, cell_w, cell_h,
+                                                    2, 2, fg_color);
+        if (!placed_batt) {
+            placed_batt = try_place_battery_search(ctx, geom, occ, cols, rows,
+                                                    origin_x, origin_y, cell_w, cell_h,
+                                                    1, 1, fg_color);
         }
     }
 
-    // 1d. Hour Digits at Analog Hand Tip
+    // 1d. Hour Digits at Analog Hand Tip (Placed nearby outside hand corridor, never covering the hand tip)
     if (s_settings.show_hand_hour) {
         int h_val = clock_is_24h_style() ? s_current_time.tm_hour : (s_current_time.tm_hour % 12);
         if (!clock_is_24h_style() && h_val == 0) h_val = 12;
         char h_str[4];
         snprintf(h_str, sizeof(h_str), "%d", h_val);
-        int h_len_chars = strlen(h_str);
-
-        int16_t tx = geom->cx + (geom->h_dx * 120) / 100;
-        int16_t ty = geom->cy + (geom->h_dy * 120) / 100;
-        int dw = 2, dh = 2;
-        int gx = (tx - origin_x) / cell_w - (h_len_chars * dw) / 2;
-        int gy = (ty - origin_y) / cell_h - dh / 2;
-        if (gx < 0) gx = 0;
-        if (gy < 0) gy = 0;
-        if (gx + h_len_chars * dw > cols) gx = cols - h_len_chars * dw;
-        if (gy + dh > rows) gy = rows - dh;
-
-        for (int i = 0; i < h_len_chars; i++) {
-            int cgx = gx + i * dw;
-            int16_t bx = origin_x + cgx * cell_w;
-            int16_t by = origin_y + gy * cell_h;
-            int16_t bw = dw * cell_w;
-            int16_t bh = dh * cell_h;
-            draw_glyph(ctx, find_glyph_index(h_str[i]), bx, by, bw, bh, true, fg_color);
-            grid_rect_occupy(occ, cgx, gy, dw, dh);
-        }
+        place_hand_tip_digits(ctx, geom, occ, cols, rows, origin_x, origin_y, cell_w, cell_h,
+                              h_str, strlen(h_str), geom->h_dx, geom->h_dy, geom->h_len, fg_color);
     }
 
-    // 1e. Minute Digits at Analog Hand Tip
+    // 1e. Minute Digits at Analog Hand Tip (Placed nearby outside hand corridor, never covering the hand tip)
     if (s_settings.show_hand_minute) {
         char m_str[4];
         snprintf(m_str, sizeof(m_str), "%02d", s_current_time.tm_min);
-        int m_len_chars = 2;
-
-        int16_t tx = geom->cx + (geom->m_dx * 84) / 100;
-        int16_t ty = geom->cy + (geom->m_dy * 84) / 100;
-        int dw = 2, dh = 2;
-        int gx = (tx - origin_x) / cell_w - (m_len_chars * dw) / 2;
-        int gy = (ty - origin_y) / cell_h - dh / 2;
-        if (gx < 0) gx = 0;
-        if (gy < 0) gy = 0;
-        if (gx + m_len_chars * dw > cols) gx = cols - m_len_chars * dw;
-        if (gy + dh > rows) gy = rows - dh;
-
-        for (int i = 0; i < m_len_chars; i++) {
-            int cgx = gx + i * dw;
-            int16_t bx = origin_x + cgx * cell_w;
-            int16_t by = origin_y + gy * cell_h;
-            int16_t bw = dw * cell_w;
-            int16_t bh = dh * cell_h;
-            draw_glyph(ctx, find_glyph_index(m_str[i]), bx, by, bw, bh, true, fg_color);
-            grid_rect_occupy(occ, cgx, gy, dw, dh);
-        }
+        place_hand_tip_digits(ctx, geom, occ, cols, rows, origin_x, origin_y, cell_w, cell_h,
+                              m_str, 2, geom->m_dx, geom->m_dy, geom->m_len, fg_color);
     }
 
     // 2. Multi-Scale Hero & Medium Grid Blocks (5x5, 4x4, 3x3, 2x2 cells)
-    // Larger min_char_size strictly enforces larger character sizes across the face!
     int min_bs = (int)s_settings.min_char_size; // 1..4
     if (min_bs < 1) min_bs = 1;
     if (min_bs > 4) min_bs = 4;
@@ -1179,23 +1268,23 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
     int loop_min_bs = (min_bs > 1) ? min_bs : 2;
     for (int bs = max_bs; bs >= loop_min_bs; bs--) {
         int accept_pct;
-        if (bs >= 4) {
-            accept_pct = 35 + (s_settings.big_char_bias * 55) / 100;
-        } else if (bs == 3) {
-            accept_pct = 25 + (s_settings.big_char_bias * 50) / 100;
+        if (s_settings.big_char_bias >= 100) {
+            accept_pct = 100;
         } else {
-            accept_pct = (min_bs == 2)
-                         ? (25 + (s_settings.big_char_bias * 45) / 100)
-                         : (15 + (s_settings.big_char_bias * 30) / 100);
+            accept_pct = 15 + (s_settings.big_char_bias * 85) / 100;
         }
 
-        for (int gy = 0; gy <= rows - bs; gy++) {
-            for (int gx = 0; gx <= cols - bs; gx++) {
+        // When imperfection == 0, maintain clean recursive matrix alignment
+        int step_y = (s_settings.imperfection == 0) ? bs : 1;
+        int step_x = (s_settings.imperfection == 0) ? bs : 1;
+
+        for (int gy = 0; gy <= rows - bs; gy += step_y) {
+            for (int gx = 0; gx <= cols - bs; gx += step_x) {
                 if (!grid_rect_free(occ, cols, rows, gx, gy, bs, bs)) {
                     continue;
                 }
                 uint32_t h = fast_hash(gx, gy, bs * 37 + (minute_salt / 15));
-                if ((int)(h % 100) >= accept_pct) {
+                if (accept_pct < 100 && (int)(h % 100) >= accept_pct) {
                     continue;
                 }
 
@@ -1206,7 +1295,7 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
 
                 uint8_t q[4];
                 int total_cov = sample_rect_quadrants(geom, bx, by, bw, bh, q);
-                if (total_cov < 48) {
+                if (total_cov < 45) {
                     continue;
                 }
 
@@ -1217,13 +1306,13 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
 
                 if (glyph_fits_cleanly(geom, g_idx, bx, by, bw, bh)) {
                     draw_glyph(ctx, g_idx, bx, by, bw, bh, false, get_garbage_color(h, fg_color));
-                    occupy_glyph_cells(occ, cols, rows, g_idx, gx, gy, bs);
+                    grid_rect_occupy(occ, gx, gy, bs, bs);
                 }
             }
         }
     }
 
-    // 3. 1x1 Base Cells: Seal Hand Contours & Outer Rim
+    // 3. Base Level Pass: Fill remaining free cells with characters for near-100% full coverage
     for (int gy = 0; gy < rows; gy++) {
         for (int gx = 0; gx < cols; gx++) {
             if (!grid_rect_free(occ, cols, rows, gx, gy, 1, 1)) {
@@ -1248,12 +1337,14 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                 continue;
             }
 
-            // On outer circle rim (away from hands!), skip minor slivers per imperfection
+            // On outer circle rim, skip minor slivers ONLY IF imperfection > 0
             if (!geom->is_full_rect && !near_hand && total_cov < 27) {
-                int skip_pct = (total_cov <= 15) ? ((int)s_settings.imperfection + 25)
-                                                 : ((int)s_settings.imperfection / 2);
-                if ((int)((h >> 16) % 100) < skip_pct) {
-                    continue;
+                if (s_settings.imperfection > 0) {
+                    int skip_pct = (total_cov <= 15) ? ((int)s_settings.imperfection + 25)
+                                                     : ((int)s_settings.imperfection / 2);
+                    if ((int)((h >> 16) % 100) < skip_pct) {
+                        continue;
+                    }
                 }
             }
 
@@ -1267,15 +1358,30 @@ static void render_semi_grid(Layer *layer, GContext *ctx, const DialGeometry *ge
                            : s_dense_alnum[(h >> 12) % s_num_dense_alnum];
                 if (glyph_fits_cleanly(geom, cand, bx, by, cell_w, cell_h)) {
                     g_idx = cand;
+                } else {
+                    for (int t = 1; t <= 10 && g_idx < 0; t++) {
+                        int alt = s_dense_alnum[(h + t * 11) % s_num_dense_alnum];
+                        if (glyph_fits_cleanly(geom, alt, bx, by, cell_w, cell_h)) {
+                            g_idx = alt;
+                        }
+                    }
                 }
-            } else {
+            }
+            if (g_idx < 0) {
                 g_idx = match_contour_glyph(geom, q, total_cov,
                                             bx, by, cell_w, cell_h,
                                             allow_punct, allow_micro, h);
-                if (g_idx < 0 && near_hand && !allow_punct && s_settings.punct_ratio > 0) {
+                if (g_idx < 0 && s_settings.punct_ratio > 0) {
                     g_idx = match_contour_glyph(geom, q, total_cov,
                                                 bx, by, cell_w, cell_h,
                                                 true, total_cov <= 15, h);
+                }
+            }
+            if (g_idx < 0 && total_cov >= 20) {
+                for (int t = 0; t < NUM_GLYPHS && g_idx < 0; t++) {
+                    if (glyph_fits_cleanly(geom, t, bx, by, cell_w, cell_h)) {
+                        g_idx = t;
+                    }
                 }
             }
 
@@ -1357,6 +1463,96 @@ static bool try_place_organic_word(GContext *ctx, const DialGeometry *geom,
     return true;
 }
 
+static void place_organic_tip_digits(GContext *ctx, const DialGeometry *geom,
+                                     uint64_t occ[], int16_t origin_x, int16_t origin_y,
+                                     int16_t span_x, int16_t span_y,
+                                     const char *str, int str_len,
+                                     int16_t hand_dx, int16_t hand_dy, int16_t hand_len,
+                                     GColor fg_color) {
+    if (hand_len <= 0) return;
+    int16_t tip_x = geom->cx + hand_dx;
+    int16_t tip_y = geom->cy + hand_dy;
+
+    int32_t ux = ((int32_t)hand_dx * 100) / hand_len;
+    int32_t uy = ((int32_t)hand_dy * 100) / hand_len;
+    int32_t nx = -uy;
+    int32_t ny = ux;
+
+    for (int size_try = 0; size_try < 2; size_try++) {
+        int dw = (size_try == 0) ? 3 : 2;
+        int dh = (size_try == 0) ? 5 : 3;
+        int total_w_cells = str_len * dw;
+        int total_h_cells = dh;
+
+        int16_t cands[10][2];
+        int num_cands = 0;
+
+        int16_t fwd_dist = 16;
+        int16_t side_dist = 18;
+
+        // Ahead of tip
+        cands[num_cands][0] = tip_x + (int16_t)((ux * fwd_dist) / 100);
+        cands[num_cands][1] = tip_y + (int16_t)((uy * fwd_dist) / 100);
+        num_cands++;
+
+        // Sideways right
+        cands[num_cands][0] = tip_x + (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y + (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // Sideways left
+        cands[num_cands][0] = tip_x - (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // Flanking back right
+        cands[num_cands][0] = tip_x - (int16_t)((ux * 14) / 100) + (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((uy * 14) / 100) + (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // Flanking back left
+        cands[num_cands][0] = tip_x - (int16_t)((ux * 14) / 100) - (int16_t)((nx * side_dist) / 100);
+        cands[num_cands][1] = tip_y - (int16_t)((uy * 14) / 100) - (int16_t)((ny * side_dist) / 100);
+        num_cands++;
+
+        // Above / Below / Left / Right
+        cands[num_cands][0] = tip_x; cands[num_cands][1] = tip_y - 14; num_cands++;
+        cands[num_cands][0] = tip_x; cands[num_cands][1] = tip_y + 14; num_cands++;
+        cands[num_cands][0] = tip_x + 14; cands[num_cands][1] = tip_y; num_cands++;
+        cands[num_cands][0] = tip_x - 14; cands[num_cands][1] = tip_y; num_cands++;
+
+        for (int c = 0; c < num_cands; c++) {
+            int16_t cx = cands[c][0];
+            int16_t cy = cands[c][1];
+            int gx = ((cx - origin_x) * SUB_N) / span_x - total_w_cells / 2;
+            int gy = ((cy - origin_y) * SUB_N) / span_y - total_h_cells / 2;
+            if (gx < 0) gx = 0;
+            if (gy < 0) gy = 0;
+            if (gx + total_w_cells > SUB_N) gx = SUB_N - total_w_cells;
+            if (gy + total_h_cells > SUB_N) gy = SUB_N - total_h_cells;
+
+            int16_t rx = origin_x + (gx * span_x) / SUB_N;
+            int16_t ry = origin_y + (gy * span_y) / SUB_N;
+            int16_t bw_px = origin_x + ((gx + total_w_cells) * span_x) / SUB_N - rx;
+            int16_t bh_px = origin_y + ((gy + total_h_cells) * span_y) / SUB_N - ry;
+
+            if (subgrid_is_free(occ, SUB_N, gx, gy, total_w_cells, total_h_cells) &&
+                is_rect_completely_free_from_hands(geom, rx, ry, bw_px, bh_px, 1)) {
+                for (int i = 0; i < str_len; i++) {
+                    int cgx = gx + i * dw;
+                    int16_t bx = origin_x + (cgx * span_x) / SUB_N;
+                    int16_t by = origin_y + (gy * span_y) / SUB_N;
+                    int16_t bw = origin_x + ((cgx + dw) * span_x) / SUB_N - bx;
+                    int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+                    draw_glyph(ctx, find_glyph_index(str[i]), bx, by, bw, bh, true, fg_color);
+                    subgrid_occupy(occ, cgx, gy, dw, dh);
+                }
+                return;
+            }
+        }
+    }
+}
+
 static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeometry *geom, GColor fg_color) {
     GRect bounds = layer_get_bounds(layer);
     int16_t min_dim = (bounds.size.w < bounds.size.h) ? bounds.size.w : bounds.size.h;
@@ -1394,10 +1590,10 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         }
 
         if (!placed) {
-            static const int cand_gy[7] = { 30, 12, 26, 16, 34, 8, 21 };
-            static const int cand_gx[5] = { 12, 8, 16, 2, 22 };
-            for (int r = 0; r < 7 && !placed; r++) {
-                for (int c = 0; c < 5 && !placed; c++) {
+            static const int cand_gy[8] = { 30, 12, 26, 16, 34, 8, 21, 38 };
+            static const int cand_gx[7] = { 12, 8, 16, 4, 20, 2, 24 };
+            for (int r = 0; r < 8 && !placed; r++) {
+                for (int c = 0; c < 7 && !placed; c++) {
                     placed = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
                                                     span_x, span_y, date_word, 6,
                                                     cand_gx[c], cand_gy[r], 4, 6,
@@ -1406,49 +1602,62 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
             }
         }
 
+        if (!placed) {
+            static const int cand_gy[8] = { 30, 12, 26, 16, 34, 8, 21, 38 };
+            static const int cand_gx[8] = { 14, 6, 20, 4, 24, 2, 28, 10 };
+            for (int r = 0; r < 8 && !placed; r++) {
+                for (int c = 0; c < 8 && !placed; c++) {
+                    placed = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                    span_x, span_y, date_word, 6,
+                                                    cand_gx[c], cand_gy[r], 3, 4,
+                                                    minute_salt, fg_color);
+                }
+            }
+        }
+
         // Stacked 2-line quadrant fallback ("SAT" over "31")
         if (!placed) {
-            static const int q_gx[6] = { 30, 6, 30, 6, 4, 32 };
-            static const int q_gy[6] = { 26, 26, 11, 11, 18, 18 };
-            for (int q = 0; q < 6 && !placed; q++) {
-                int dw = 4, dh = 6;
-                int gx0 = q_gx[q], gy0 = q_gy[q];
-                bool ok = true;
-                for (int i = 0; i < 3 && ok; i++) {
-                    int gx = gx0 + i * dw;
-                    int16_t bx = origin_x + (gx * span_x) / SUB_N;
-                    int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
-                    int16_t by = origin_y + (gy0 * span_y) / SUB_N;
-                    int16_t bh = origin_y + ((gy0 + dh) * span_y) / SUB_N - by;
-                    uint8_t qv[4];
-                    if (!subgrid_is_free(occ, SUB_N, gx, gy0, dw, dh) ||
-                        sample_rect_quadrants(geom, bx, by, bw, bh, qv) < 45 ||
-                        !glyph_fits_cleanly(geom, find_glyph_index(s_day_names[wday][i]), bx, by, bw, bh)) {
-                        ok = false;
+            for (int size_try = 0; size_try < 2 && !placed; size_try++) {
+                int dw = (size_try == 0) ? 4 : 3;
+                int dh = (size_try == 0) ? 6 : 4;
+                for (int gy0 = 4; gy0 <= SUB_N - 2 * dh && !placed; gy0 += 4) {
+                    for (int gx0 = 2; gx0 <= SUB_N - 3 * dw && !placed; gx0 += 3) {
+                        bool ok = true;
+                        for (int i = 0; i < 3 && ok; i++) {
+                            int gx = gx0 + i * dw;
+                            int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                            int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                            int16_t by = origin_y + (gy0 * span_y) / SUB_N;
+                            int16_t bh = origin_y + ((gy0 + dh) * span_y) / SUB_N - by;
+                            if (!subgrid_is_free(occ, SUB_N, gx, gy0, dw, dh) ||
+                                !is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 1) ||
+                                !glyph_fits_cleanly(geom, find_glyph_index(s_day_names[wday][i]), bx, by, bw, bh)) {
+                                ok = false;
+                            }
+                        }
+                        for (int i = 0; i < 2 && ok; i++) {
+                            int gx = gx0 + (dw / 2) + i * dw;
+                            int gy = gy0 + dh;
+                            int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                            int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                            int16_t by = origin_y + (gy * span_y) / SUB_N;
+                            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+                            if (!subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) ||
+                                !is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 1) ||
+                                !glyph_fits_cleanly(geom, find_glyph_index(num_word[i]), bx, by, bw, bh)) {
+                                ok = false;
+                            }
+                        }
+                        if (ok) {
+                            try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                   span_x, span_y, s_day_names[wday], 3,
+                                                   gx0, gy0, dw, dh, 0, fg_color);
+                            try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                   span_x, span_y, num_word, 2,
+                                                   gx0 + (dw / 2), gy0 + dh, dw, dh, 0, fg_color);
+                            placed = true;
+                        }
                     }
-                }
-                for (int i = 0; i < 2 && ok; i++) {
-                    int gx = gx0 + 2 + i * dw;
-                    int gy = gy0 + dh;
-                    int16_t bx = origin_x + (gx * span_x) / SUB_N;
-                    int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
-                    int16_t by = origin_y + (gy * span_y) / SUB_N;
-                    int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
-                    uint8_t qv[4];
-                    if (!subgrid_is_free(occ, SUB_N, gx, gy, dw, dh) ||
-                        sample_rect_quadrants(geom, bx, by, bw, bh, qv) < 45 ||
-                        !glyph_fits_cleanly(geom, find_glyph_index(num_word[i]), bx, by, bw, bh)) {
-                        ok = false;
-                    }
-                }
-                if (ok) {
-                    try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
-                                           span_x, span_y, s_day_names[wday], 3,
-                                           gx0, gy0, dw, dh, 0, fg_color);
-                    try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
-                                           span_x, span_y, num_word, 2,
-                                           gx0 + 2, gy0 + dh, dw, dh, 0, fg_color);
-                    placed = true;
                 }
             }
         }
@@ -1459,13 +1668,17 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         int mon = (s_current_time.tm_mon >= 0 && s_current_time.tm_mon < 12) ? s_current_time.tm_mon : 0;
         const char *month_str = s_month_names[mon];
         bool placed_mon = false;
-        static const int m_gy[6] = { 20, 28, 12, 33, 16, 25 };
-        static const int m_gx[6] = { 6, 26, 12, 22, 30, 4 };
-        for (int i = 0; i < 6 && !placed_mon; i++) {
-            placed_mon = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
-                                                span_x, span_y, month_str, 3,
-                                                m_gx[i], m_gy[i], 4, 6,
-                                                minute_salt, fg_color);
+        for (int size_try = 0; size_try < 2 && !placed_mon; size_try++) {
+            int dw = (size_try == 0) ? 4 : 3;
+            int dh = (size_try == 0) ? 6 : 4;
+            for (int gy = 4; gy <= SUB_N - dh && !placed_mon; gy += 4) {
+                for (int gx = 2; gx <= SUB_N - 3 * dw && !placed_mon; gx += 3) {
+                    placed_mon = try_place_organic_word(ctx, geom, occ, origin_x, origin_y,
+                                                        span_x, span_y, month_str, 3,
+                                                        gx, gy, dw, dh,
+                                                        minute_salt, fg_color);
+                }
+            }
         }
     }
 
@@ -1474,79 +1687,43 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         uint8_t batt_rows[8];
         get_battery_glyph_rows(batt_rows);
         bool placed_batt = false;
-        static const int b_gy[6] = { 14, 32, 20, 26, 10, 35 };
-        static const int b_gx[6] = { 32, 8, 28, 14, 35, 10 };
-        int dw = 4, dh = 6;
-        for (int i = 0; i < 6 && !placed_batt; i++) {
-            int gx = b_gx[i], gy = b_gy[i];
-            if (subgrid_is_free(occ, SUB_N, gx, gy, dw, dh)) {
-                int16_t bx = origin_x + (gx * span_x) / SUB_N;
-                int16_t by = origin_y + (gy * span_y) / SUB_N;
-                int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
-                int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
-                if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 3)) {
-                    draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
-                    subgrid_occupy(occ, gx, gy, dw, dh);
-                    placed_batt = true;
+        for (int size_try = 0; size_try < 2 && !placed_batt; size_try++) {
+            int dw = (size_try == 0) ? 4 : 2;
+            int dh = (size_try == 0) ? 6 : 3;
+            for (int gy = 4; gy <= SUB_N - dh && !placed_batt; gy += 4) {
+                for (int gx = SUB_N - dw - 2; gx >= 2 && !placed_batt; gx -= 3) {
+                    if (subgrid_is_free(occ, SUB_N, gx, gy, dw, dh)) {
+                        int16_t bx = origin_x + (gx * span_x) / SUB_N;
+                        int16_t by = origin_y + (gy * span_y) / SUB_N;
+                        int16_t bw = origin_x + ((gx + dw) * span_x) / SUB_N - bx;
+                        int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
+                        if (is_rect_completely_free_from_hands(geom, bx, by, bw, bh, 1)) {
+                            draw_glyph_rows(ctx, batt_rows, bx, by, bw, bh, true, fg_color);
+                            subgrid_occupy(occ, gx, gy, dw, dh);
+                            placed_batt = true;
+                        }
+                    }
                 }
             }
         }
     }
 
-    // 1d. Hour Digits at Analog Hand Tip
+    // 1d. Hour Digits at Analog Hand Tip (Placed nearby outside hand corridor, never covering the hand tip)
     if (s_settings.show_hand_hour) {
         int h_val = clock_is_24h_style() ? s_current_time.tm_hour : (s_current_time.tm_hour % 12);
         if (!clock_is_24h_style() && h_val == 0) h_val = 12;
         char h_str[4];
         snprintf(h_str, sizeof(h_str), "%d", h_val);
-        int h_len_chars = strlen(h_str);
-
-        int16_t tx = geom->cx + (geom->h_dx * 120) / 100;
-        int16_t ty = geom->cy + (geom->h_dy * 120) / 100;
-        int dw = 3, dh = 5;
-        int gx = ((tx - origin_x) * SUB_N) / span_x - (h_len_chars * dw) / 2;
-        int gy = ((ty - origin_y) * SUB_N) / span_y - dh / 2;
-        if (gx < 0) gx = 0;
-        if (gy < 0) gy = 0;
-        if (gx + h_len_chars * dw > SUB_N) gx = SUB_N - h_len_chars * dw;
-        if (gy + dh > SUB_N) gy = SUB_N - dh;
-
-        for (int i = 0; i < h_len_chars; i++) {
-            int cgx = gx + i * dw;
-            int16_t bx = origin_x + (cgx * span_x) / SUB_N;
-            int16_t by = origin_y + (gy * span_y) / SUB_N;
-            int16_t bw = origin_x + ((cgx + dw) * span_x) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
-            draw_glyph(ctx, find_glyph_index(h_str[i]), bx, by, bw, bh, true, fg_color);
-            subgrid_occupy(occ, cgx, gy, dw, dh);
-        }
+        place_organic_tip_digits(ctx, geom, occ, origin_x, origin_y, span_x, span_y,
+                                 h_str, strlen(h_str), geom->h_dx, geom->h_dy, geom->h_len, fg_color);
     }
 
-    // 1e. Minute Digits at Analog Hand Tip
+    // 1e. Minute Digits at Analog Hand Tip (Placed nearby outside hand corridor, never covering the hand tip)
     if (s_settings.show_hand_minute) {
         char m_str[4];
         snprintf(m_str, sizeof(m_str), "%02d", s_current_time.tm_min);
-        int m_len_chars = 2;
-
-        int16_t tx = geom->cx + (geom->m_dx * 84) / 100;
-        int16_t ty = geom->cy + (geom->m_dy * 84) / 100;
-        int dw = 3, dh = 5;
-        int gx = ((tx - origin_x) * SUB_N) / span_x - (m_len_chars * dw) / 2;
-        int gy = ((ty - origin_y) * SUB_N) / span_y - dh / 2;
-        if (gx < 0) gx = 0;
-        if (gy < 0) gy = 0;
-        if (gx + m_len_chars * dw > SUB_N) gx = SUB_N - m_len_chars * dw;
-        if (gy + dh > SUB_N) gy = SUB_N - dh;
-
-        for (int i = 0; i < m_len_chars; i++) {
-            int cgx = gx + i * dw;
-            int16_t bx = origin_x + (cgx * span_x) / SUB_N;
-            int16_t by = origin_y + (gy * span_y) / SUB_N;
-            int16_t bw = origin_x + ((cgx + dw) * span_x) / SUB_N - bx;
-            int16_t bh = origin_y + ((gy + dh) * span_y) / SUB_N - by;
-            draw_glyph(ctx, find_glyph_index(m_str[i]), bx, by, bw, bh, true, fg_color);
-            subgrid_occupy(occ, cgx, gy, dw, dh);
-        }
+        place_organic_tip_digits(ctx, geom, occ, origin_x, origin_y, span_x, span_y,
+                                 m_str, 2, geom->m_dx, geom->m_dy, geom->m_len, fg_color);
     }
 
     // 2. Scattered Multi-Scale Pass (max_lvl down to min_lvl)
@@ -1565,14 +1742,14 @@ static void render_organic_collage(Layer *layer, GContext *ctx, const DialGeomet
         uint16_t stride = LVL_STRIDE[lvl];
 
         int accept_pct;
-        if (lvl >= 4) {
-            accept_pct = 35 + (s_settings.big_char_bias * 55) / 100;
-        } else if (lvl == 3) {
-            accept_pct = 25 + (s_settings.big_char_bias * 50) / 100;
-        } else if (lvl == 2) {
-            accept_pct = (min_lvl == 2) ? 75 : 45;
+        if (lvl == min_lvl) {
+            accept_pct = 100; // Always fill base level for maximum density
+        } else if (s_settings.big_char_bias >= 100) {
+            accept_pct = 100;
+        } else if (lvl >= 4) {
+            accept_pct = 15 + (s_settings.big_char_bias * 75) / 100;
         } else {
-            accept_pct = 85;
+            accept_pct = 20 + (s_settings.big_char_bias * 70) / 100;
         }
 
         int idx = (int)(fast_hash(lvl, minute_salt, 53) % SUB_CELLS);
