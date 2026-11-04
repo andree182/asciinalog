@@ -25,7 +25,7 @@ The watchface is engineered under strict embedded constraints: deterministic sin
 ```
 +--------------------------------------------------------------+
 |                     PebbleKit JS (PKJS)                      |
-|  - Instant presets (Default, Semi-Grid, Big Hero, Matrix)    |
+|  - Instant presets                                           |
 |  - Segmented toggle UI & collapsible advanced settings       |
 |  - Round/Rectangular hardware default detection              |
 |  - AppMessage JSON serialization                             |
