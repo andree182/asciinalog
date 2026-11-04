@@ -1942,7 +1942,7 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
     geom.h_len_sq = (int32_t)geom.h_dx * (int32_t)geom.h_dx +
                     (int32_t)geom.h_dy * (int32_t)geom.h_dy;
 
-    int16_t m_core = (dial_span * 36) / 1000; // ~7.0px half-width (14px channel on Emery)
+    int16_t m_core = (dial_span * 46) / 1000; // ~9.0px half-width (same width as hour hand)
     int16_t m_near = m_core + (dial_span / 16);
     geom.m_core_w_sq = (int32_t)m_core * (int32_t)m_core;
     geom.m_near_w_sq = (int32_t)m_near * (int32_t)m_near;
